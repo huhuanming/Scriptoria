@@ -6,7 +6,33 @@ public final class ScriptRunner: Sendable {
 
     /// Run a script and return the result
     public func run(_ script: Script) async throws -> ScriptRun {
+        try await runStreaming(script, onOutput: nil)
+    }
+
+    /// Run a script with real-time streaming output.
+    /// `onOutput` is called on each chunk of stdout/stderr data: (text, isStderr)
+    public func runStreaming(
+        _ script: Script,
+        onOutput: (@Sendable (String, Bool) -> Void)?
+    ) async throws -> ScriptRun {
+        try await runStreaming(script, runId: UUID(), logManager: nil, onStart: nil, onOutput: onOutput)
+    }
+
+    /// Run a script with persistent logging, PID tracking, and real-time streaming output.
+    /// - Parameters:
+    ///   - runId: The UUID to use for the ScriptRun record
+    ///   - logManager: If provided, output is written to a log file on disk
+    ///   - onStart: Called with the process PID immediately after launch
+    ///   - onOutput: Called on each chunk of stdout/stderr data: (text, isStderr)
+    public func runStreaming(
+        _ script: Script,
+        runId: UUID,
+        logManager: LogManager?,
+        onStart: (@Sendable (Int32) -> Void)?,
+        onOutput: (@Sendable (String, Bool) -> Void)?
+    ) async throws -> ScriptRun {
         var record = ScriptRun(
+            id: runId,
             scriptId: script.id,
             scriptTitle: script.title
         )
@@ -56,18 +82,102 @@ public final class ScriptRunner: Sendable {
         process.standardOutput = stdoutPipe
         process.standardError = stderrPipe
 
+        // Collect output in thread-safe storage
+        let outputCollector = OutputCollector()
+
+        // Capture runId and logManager for use in closures
+        let capturedRunId = record.id
+        let capturedLogManager = logManager
+
+        // Set up streaming handlers if callback provided
+        if let onOutput {
+            stdoutPipe.fileHandleForReading.readabilityHandler = { handle in
+                let data = handle.availableData
+                guard !data.isEmpty else { return }
+                if let text = String(data: data, encoding: .utf8) {
+                    outputCollector.appendStdout(text)
+                    capturedLogManager?.append(text, to: capturedRunId)
+                    onOutput(text, false)
+                }
+            }
+            stderrPipe.fileHandleForReading.readabilityHandler = { handle in
+                let data = handle.availableData
+                guard !data.isEmpty else { return }
+                if let text = String(data: data, encoding: .utf8) {
+                    outputCollector.appendStderr(text)
+                    capturedLogManager?.append(text, to: capturedRunId)
+                    onOutput(text, true)
+                }
+            }
+        } else if capturedLogManager != nil {
+            // Even without onOutput callback, write to log file
+            stdoutPipe.fileHandleForReading.readabilityHandler = { handle in
+                let data = handle.availableData
+                guard !data.isEmpty else { return }
+                if let text = String(data: data, encoding: .utf8) {
+                    outputCollector.appendStdout(text)
+                    capturedLogManager?.append(text, to: capturedRunId)
+                }
+            }
+            stderrPipe.fileHandleForReading.readabilityHandler = { handle in
+                let data = handle.availableData
+                guard !data.isEmpty else { return }
+                if let text = String(data: data, encoding: .utf8) {
+                    outputCollector.appendStderr(text)
+                    capturedLogManager?.append(text, to: capturedRunId)
+                }
+            }
+        }
+
         do {
             try process.run()
-            process.waitUntilExit()
 
-            let stdoutData = stdoutPipe.fileHandleForReading.readDataToEndOfFile()
-            let stderrData = stderrPipe.fileHandleForReading.readDataToEndOfFile()
+            // Capture PID and notify caller
+            let pid = process.processIdentifier
+            record.pid = pid
+            onStart?(pid)
 
-            record.output = String(data: stdoutData, encoding: .utf8) ?? ""
-            record.errorOutput = String(data: stderrData, encoding: .utf8) ?? ""
+            // Wait for process on a background thread to avoid blocking
+            await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+                process.terminationHandler = { _ in
+                    continuation.resume()
+                }
+            }
+
+            let hasHandlers = onOutput != nil || capturedLogManager != nil
+            if hasHandlers {
+                // Clean up handlers
+                stdoutPipe.fileHandleForReading.readabilityHandler = nil
+                stderrPipe.fileHandleForReading.readabilityHandler = nil
+                // Read any remaining data
+                let remainingStdout = stdoutPipe.fileHandleForReading.readDataToEndOfFile()
+                let remainingStderr = stderrPipe.fileHandleForReading.readDataToEndOfFile()
+                if let text = String(data: remainingStdout, encoding: .utf8), !text.isEmpty {
+                    outputCollector.appendStdout(text)
+                    capturedLogManager?.append(text, to: capturedRunId)
+                    onOutput?(text, false)
+                }
+                if let text = String(data: remainingStderr, encoding: .utf8), !text.isEmpty {
+                    outputCollector.appendStderr(text)
+                    capturedLogManager?.append(text, to: capturedRunId)
+                    onOutput?(text, true)
+                }
+                record.output = outputCollector.stdout
+                record.errorOutput = outputCollector.stderr
+            } else {
+                let stdoutData = stdoutPipe.fileHandleForReading.readDataToEndOfFile()
+                let stderrData = stderrPipe.fileHandleForReading.readDataToEndOfFile()
+                record.output = String(data: stdoutData, encoding: .utf8) ?? ""
+                record.errorOutput = String(data: stderrData, encoding: .utf8) ?? ""
+            }
+
             record.exitCode = process.terminationStatus
             record.finishedAt = Date()
-            record.status = process.terminationStatus == 0 ? .success : .failure
+            if process.terminationReason == .uncaughtSignal {
+                record.status = .cancelled
+            } else {
+                record.status = process.terminationStatus == 0 ? .success : .failure
+            }
         } catch {
             record.finishedAt = Date()
             record.status = .failure
@@ -167,4 +277,17 @@ public final class ScriptRunner: Sendable {
 
         return .sh
     }
+}
+
+/// Thread-safe collector for streaming output
+final class OutputCollector: @unchecked Sendable {
+    private let lock = NSLock()
+    private var _stdout = ""
+    private var _stderr = ""
+
+    var stdout: String { lock.withLock { _stdout } }
+    var stderr: String { lock.withLock { _stderr } }
+
+    func appendStdout(_ text: String) { lock.withLock { _stdout += text } }
+    func appendStderr(_ text: String) { lock.withLock { _stderr += text } }
 }

@@ -10,6 +10,7 @@ struct ScriptDetailView: View {
     @State private var selectedRun: ScriptRun?
     @State private var isAddingTag = false
     @State private var newTagText = ""
+    @State private var averageDuration: TimeInterval?
     @Environment(\.colorScheme) var colorScheme
 
     var isRunning: Bool {
@@ -57,14 +58,23 @@ struct ScriptDetailView: View {
                 }
                 .help("Edit script")
 
-                Button {
-                    Task { await appState.runScript(script) }
-                } label: {
-                    Image(systemName: isRunning ? "stop.fill" : "play.fill")
-                        .contentTransition(.symbolEffect(.replace))
+                if isRunning {
+                    Button {
+                        appState.stopScript(script.id)
+                    } label: {
+                        Image(systemName: "stop.fill")
+                            .contentTransition(.symbolEffect(.replace))
+                    }
+                    .help("Stop script")
+                } else {
+                    Button {
+                        Task { await appState.runScript(script) }
+                    } label: {
+                        Image(systemName: "play.fill")
+                            .contentTransition(.symbolEffect(.replace))
+                    }
+                    .help("Run script")
                 }
-                .help(isRunning ? "Running..." : "Run script")
-                .disabled(isRunning)
             }
         }
         .sheet(isPresented: $showEditSheet) {
@@ -102,22 +112,28 @@ struct ScriptDetailView: View {
 
                 Spacer()
 
-                // Run button
-                Button {
-                    Task { await appState.runScript(script) }
-                } label: {
-                    HStack(spacing: 6) {
-                        if isRunning {
-                            ProgressView()
-                                .scaleEffect(0.6)
-                        } else {
-                            Image(systemName: "play.fill")
+                // Run/Stop button
+                if isRunning {
+                    Button {
+                        appState.stopScript(script.id)
+                    } label: {
+                        HStack(spacing: 6) {
+                            Image(systemName: "stop.fill")
+                            Text("Stop")
                         }
-                        Text(isRunning ? "Running..." : "Run")
                     }
+                    .buttonStyle(RunButtonStyle(isRunning: isRunning))
+                } else {
+                    Button {
+                        Task { await appState.runScript(script) }
+                    } label: {
+                        HStack(spacing: 6) {
+                            Image(systemName: "play.fill")
+                            Text("Run")
+                        }
+                    }
+                    .buttonStyle(RunButtonStyle(isRunning: false))
                 }
-                .buttonStyle(RunButtonStyle(isRunning: isRunning))
-                .disabled(isRunning)
             }
 
             // Tags (editable)
@@ -193,10 +209,10 @@ struct ScriptDetailView: View {
                 )
 
                 StatCard(
-                    icon: interpreterIcon,
-                    label: "Interpreter",
-                    value: script.interpreter.rawValue,
-                    color: Theme.accent
+                    icon: "timer",
+                    label: "Avg Duration",
+                    value: averageDuration.map { formatDuration($0) } ?? "—",
+                    color: .orange
                 )
             }
             .padding(20)
@@ -265,6 +281,11 @@ struct ScriptDetailView: View {
                         Label(isRunning ? "Running Output" : "Latest Output", systemImage: isRunning ? "play.circle.fill" : "checkmark.circle.fill")
                             .font(.headline)
                             .foregroundStyle(isRunning ? Theme.runningColor : Theme.successColor)
+                        if let runId = appState.currentRunId, appState.currentOutputScriptId == script.id {
+                            Text(String(runId.uuidString.prefix(8)))
+                                .font(.system(.caption2, design: .monospaced))
+                                .foregroundStyle(.tertiary)
+                        }
                         Spacer()
                         Button {
                             NSPasteboard.general.clearContents()
@@ -280,9 +301,17 @@ struct ScriptDetailView: View {
                     .padding(.horizontal, 20)
                     .padding(.top, 16)
 
-                    ScrollView(.horizontal, showsIndicators: false) {
-                        Text(appState.currentOutput)
-                            .terminalOutput()
+                    ScrollViewReader { proxy in
+                        ScrollView(.horizontal, showsIndicators: false) {
+                            Text(appState.currentOutput)
+                                .terminalOutput()
+                            Color.clear.frame(height: 0).id("outputBottom")
+                        }
+                        .onChange(of: appState.currentOutput) { _, _ in
+                            if isRunning {
+                                proxy.scrollTo("outputBottom", anchor: .bottom)
+                            }
+                        }
                     }
                     .padding(.horizontal, 20)
                 }
@@ -403,6 +432,7 @@ struct ScriptDetailView: View {
 
     private func loadHistory() {
         runHistory = appState.fetchRunHistory(scriptId: script.id)
+        averageDuration = appState.fetchAverageDuration(scriptId: script.id)
     }
 
     private func removeTag(_ tag: String) {
@@ -548,6 +578,9 @@ struct RunHistoryPill: View {
             Image(systemName: statusIcon)
                 .font(.system(size: 7, weight: .bold))
                 .foregroundStyle(statusColor)
+            Text(String(run.id.uuidString.prefix(8)))
+                .font(.system(.caption2, design: .monospaced))
+                .foregroundStyle(isSelected ? .primary : .tertiary)
             Text(run.startedAt.formatted(Date.FormatStyle().hour().minute().second()))
                 .font(.caption2)
                 .foregroundStyle(isSelected ? .primary : .secondary)

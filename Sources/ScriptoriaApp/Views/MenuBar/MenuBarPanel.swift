@@ -253,6 +253,9 @@ struct MenuBarScriptRow: View {
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
                 }
+                if let nextRun = nextScheduleRun {
+                    NextRunLabel(date: nextRun)
+                }
             }
 
             Spacer()
@@ -285,6 +288,13 @@ struct MenuBarScriptRow: View {
         }
     }
 
+    var nextScheduleRun: Date? {
+        appState.schedules
+            .filter { $0.scriptId == script.id && $0.isEnabled && $0.nextRunAt != nil }
+            .compactMap(\.nextRunAt)
+            .min()
+    }
+
     var statusIcon: String {
         switch script.lastRunStatus {
         case .success: return "checkmark"
@@ -302,6 +312,45 @@ struct MenuBarScriptRow: View {
         case .running: return Theme.runningColor
         case .cancelled: return Theme.warningColor
         case nil: return .gray.opacity(0.5)
+        }
+    }
+}
+
+// MARK: - Next Run Label
+
+struct NextRunLabel: View {
+    let date: Date
+    @State private var now = Date()
+    private let timer = Timer.publish(every: 30, on: .main, in: .common).autoconnect()
+
+    var body: some View {
+        HStack(spacing: 3) {
+            Image(systemName: "clock")
+                .font(.system(size: 7))
+            Text(countdownText)
+                .font(.caption2)
+        }
+        .foregroundStyle(.orange.opacity(0.8))
+        .onReceive(timer) { _ in now = Date() }
+    }
+
+    var countdownText: String {
+        let interval = date.timeIntervalSince(now)
+        if interval <= 0 {
+            return "any moment"
+        } else if interval < 60 {
+            return "in <1m"
+        } else if interval < 3600 {
+            let m = Int(interval / 60)
+            return "in \(m)m"
+        } else if interval < 86400 {
+            let h = Int(interval / 3600)
+            let m = Int((interval.truncatingRemainder(dividingBy: 3600)) / 60)
+            return m > 0 ? "in \(h)h \(m)m" : "in \(h)h"
+        } else {
+            let d = Int(interval / 86400)
+            let h = Int((interval.truncatingRemainder(dividingBy: 86400)) / 3600)
+            return h > 0 ? "in \(d)d \(h)h" : "in \(d)d"
         }
     }
 }

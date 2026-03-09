@@ -169,6 +169,13 @@ struct ScriptRowView: View {
         appState.schedules.contains { $0.scriptId == script.id && $0.isEnabled }
     }
 
+    var nextScheduleRun: Date? {
+        appState.schedules
+            .filter { $0.scriptId == script.id && $0.isEnabled && $0.nextRunAt != nil }
+            .compactMap(\.nextRunAt)
+            .min()
+    }
+
     var body: some View {
         HStack(spacing: 12) {
             // Status indicator
@@ -227,7 +234,9 @@ struct ScriptRowView: View {
                 Text("\(script.runCount)")
                     .font(.caption.monospacedDigit())
                     .foregroundStyle(.tertiary)
-                if let lastRun = script.lastRunAt {
+                if let nextRun = nextScheduleRun {
+                    NextRunLabel(date: nextRun)
+                } else if let lastRun = script.lastRunAt {
                     Text(lastRun.formatted(.relative(presentation: .named)))
                         .font(.caption2)
                         .foregroundStyle(.quaternary)

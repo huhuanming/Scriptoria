@@ -125,9 +125,7 @@ struct ScheduleRow: View {
                     .foregroundStyle(schedule.isEnabled ? .primary : .secondary)
 
                 if let next = schedule.nextRunAt, schedule.isEnabled {
-                    Text("Next: \(next.formatted(.relative(presentation: .named)))")
-                        .font(.caption2)
-                        .foregroundStyle(.tertiary)
+                    NextRunLabel(date: next)
                 }
             }
 

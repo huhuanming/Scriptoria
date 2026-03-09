@@ -13,12 +13,15 @@ final class AppState: ObservableObject {
     @Published var runningScriptIds: Set<UUID> = []
     @Published var currentOutput: String = ""
     @Published var currentOutputScriptId: UUID?
+    @Published var currentRunId: UUID?
     @Published var config: Config
     @Published var needsOnboarding: Bool
 
     private var store: ScriptStore
     private var scheduleStore: ScheduleStore
     private let runner = ScriptRunner()
+    private var logManager: LogManager
+    private var logWatcherSource: DispatchSourceFileSystemObject?
 
     var filteredScripts: [Script] {
         var result = scripts
@@ -58,9 +61,12 @@ final class AppState: ObservableObject {
         self.config = loadedConfig
         self.store = ScriptStore(config: loadedConfig)
         self.scheduleStore = ScheduleStore(config: loadedConfig)
+        self.logManager = LogManager(config: loadedConfig)
         // First launch: no pointer file exists yet
         let pointerPath = FileManager.default.homeDirectoryForCurrentUser.path + "/.scriptoria/pointer.json"
         self.needsOnboarding = !FileManager.default.fileExists(atPath: pointerPath)
+        // Clean stale runs on startup
+        ProcessManager.cleanStaleRuns(store: store)
     }
 
     func loadScripts() async {
@@ -172,23 +178,59 @@ final class AppState: ObservableObject {
     }
 
     func runScript(_ script: Script) async {
+        // Duplicate prevention: check if already running
+        if let existingRun = try? store.fetchRunningRun(scriptId: script.id),
+           let pid = existingRun.pid,
+           ProcessManager.isRunning(pid: pid) {
+            // Attach to existing run's log instead of starting a new one
+            currentRunId = existingRun.id
+            currentOutputScriptId = script.id
+            if let logContent = logManager.readLog(for: existingRun.id) {
+                currentOutput = logContent
+            }
+            startLogWatcher(for: existingRun.id)
+            return
+        }
+
         runningScriptIds.insert(script.id)
         isRunning = true
         currentOutput = ""
         currentOutputScriptId = script.id
 
-        let result = try? await runner.run(script)
+        // Insert a "running" record before execution starts
+        let runId = UUID()
+        currentRunId = runId
+        var runRecord = ScriptRun(id: runId, scriptId: script.id, scriptTitle: script.title)
+        try? await store.saveRunHistory(runRecord)
+
+        let result = try? await runner.runStreaming(script, runId: runId, logManager: logManager, onStart: { [weak self] pid in
+            runRecord.pid = pid
+            try? self?.store.updateRunHistorySync(runRecord)
+        }) { [weak self] text, isStderr in
+            Task { @MainActor in
+                guard let self else { return }
+                self.currentOutput += text
+            }
+        }
 
         runningScriptIds.remove(script.id)
         isRunning = !runningScriptIds.isEmpty
 
         if let result {
+            // Update the run record with final result
+            runRecord.output = result.output
+            runRecord.errorOutput = result.errorOutput
+            runRecord.exitCode = result.exitCode
+            runRecord.finishedAt = result.finishedAt
+            runRecord.status = result.status
+            runRecord.pid = result.pid
+            try? await store.updateRunHistory(runRecord)
+
             currentOutput = result.output
             if !result.errorOutput.isEmpty {
                 currentOutput += "\n--- STDERR ---\n" + result.errorOutput
             }
             try? await store.recordRun(id: script.id, status: result.status)
-            try? await store.saveRunHistory(result)
             scripts = store.all()
 
             if config.notifyOnCompletion {
@@ -197,8 +239,52 @@ final class AppState: ObservableObject {
         }
     }
 
+    func stopScript(_ scriptId: UUID) {
+        if let run = try? store.fetchRunningRun(scriptId: scriptId),
+           let pid = run.pid,
+           ProcessManager.isRunning(pid: pid) {
+            _ = ProcessManager.terminate(pid: pid)
+        }
+    }
+
+    /// Watch a log file for changes and update currentOutput
+    private func startLogWatcher(for runId: UUID) {
+        stopLogWatcher()
+        let path = logManager.logPath(for: runId)
+
+        guard let fileHandle = FileHandle(forReadingAtPath: path) else { return }
+        // Seek to current end so we only get new data via the watcher
+        fileHandle.seekToEndOfFile()
+
+        let source = DispatchSource.makeFileSystemObjectSource(
+            fileDescriptor: fileHandle.fileDescriptor,
+            eventMask: .write,
+            queue: .main
+        )
+        source.setEventHandler { [weak self] in
+            let data = fileHandle.readDataToEndOfFile()
+            if let text = String(data: data, encoding: .utf8), !text.isEmpty {
+                self?.currentOutput += text
+            }
+        }
+        source.setCancelHandler {
+            fileHandle.closeFile()
+        }
+        source.resume()
+        logWatcherSource = source
+    }
+
+    private func stopLogWatcher() {
+        logWatcherSource?.cancel()
+        logWatcherSource = nil
+    }
+
     func fetchRunHistory(scriptId: UUID) -> [ScriptRun] {
         (try? store.fetchRunHistory(scriptId: scriptId)) ?? []
+    }
+
+    func fetchAverageDuration(scriptId: UUID) -> TimeInterval? {
+        try? store.fetchAverageDuration(scriptId: scriptId)
     }
 
     func updateConfig(_ newConfig: Config) {
@@ -211,6 +297,7 @@ final class AppState: ObservableObject {
         config = newConfig
         store = ScriptStore(config: newConfig)
         scheduleStore = ScheduleStore(config: newConfig)
+        logManager = LogManager(config: newConfig)
         await loadScripts()
     }
 }

@@ -37,6 +37,9 @@ struct ListCommand: AsyncParsableCommand {
             return
         }
 
+        // Load average durations for all scripts
+        let avgDurations = (try? store.fetchAllAverageDurations()) ?? [:]
+
         print("\n  \("Scriptoria".uppercased()) — \(scripts.count) script(s)\n")
         print(String(repeating: "─", count: 72))
 
@@ -63,7 +66,21 @@ struct ListCommand: AsyncParsableCommand {
 
             let shortId = String(script.id.uuidString.prefix(8))
             let tags = script.tags.isEmpty ? "" : " [\(script.tags.joined(separator: ", "))]"
-            print("       \(shortId) · \(script.interpreter.rawValue)\(tags) · runs: \(script.runCount)")
+            let avgStr: String
+            if let avg = avgDurations[script.id] {
+                if avg < 1 {
+                    avgStr = " · avg: \(String(format: "%.0fms", avg * 1000))"
+                } else if avg < 60 {
+                    avgStr = " · avg: \(String(format: "%.1fs", avg))"
+                } else {
+                    let m = Int(avg) / 60
+                    let s = Int(avg) % 60
+                    avgStr = " · avg: \(m)m \(s)s"
+                }
+            } else {
+                avgStr = ""
+            }
+            print("       \(shortId) · \(script.interpreter.rawValue)\(tags) · runs: \(script.runCount)\(avgStr)")
             print(String(repeating: "─", count: 72))
         }
         print()

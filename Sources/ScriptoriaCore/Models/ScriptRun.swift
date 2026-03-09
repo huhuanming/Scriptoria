@@ -11,6 +11,7 @@ public struct ScriptRun: Codable, Identifiable, Sendable {
     public var exitCode: Int32?
     public var output: String
     public var errorOutput: String
+    public var pid: Int32?
 
     public init(
         id: UUID = UUID(),
@@ -21,7 +22,8 @@ public struct ScriptRun: Codable, Identifiable, Sendable {
         status: RunStatus = .running,
         exitCode: Int32? = nil,
         output: String = "",
-        errorOutput: String = ""
+        errorOutput: String = "",
+        pid: Int32? = nil
     ) {
         self.id = id
         self.scriptId = scriptId
@@ -32,6 +34,7 @@ public struct ScriptRun: Codable, Identifiable, Sendable {
         self.exitCode = exitCode
         self.output = output
         self.errorOutput = errorOutput
+        self.pid = pid
     }
 
     /// Duration of the run in seconds

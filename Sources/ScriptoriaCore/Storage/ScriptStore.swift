@@ -142,6 +142,15 @@ public final class ScriptStore: @unchecked Sendable {
         try db.insertScriptRun(run)
     }
 
+    public func updateRunHistory(_ run: ScriptRun) async throws {
+        try db.updateScriptRun(run)
+    }
+
+    /// Synchronous variant for updating run history (useful from non-async contexts)
+    public func updateRunHistorySync(_ run: ScriptRun) throws {
+        try db.updateScriptRun(run)
+    }
+
     /// Fetch run history for a specific script
     public func fetchRunHistory(scriptId: UUID, limit: Int = 50) throws -> [ScriptRun] {
         try db.fetchRunHistory(scriptId: scriptId, limit: limit)
@@ -150,5 +159,30 @@ public final class ScriptStore: @unchecked Sendable {
     /// Fetch all run history
     public func fetchAllRunHistory(limit: Int = 100) throws -> [ScriptRun] {
         try db.fetchAllRunHistory(limit: limit)
+    }
+
+    /// Fetch a single script run by ID
+    public func fetchScriptRun(id: UUID) throws -> ScriptRun? {
+        try db.fetchScriptRun(id: id)
+    }
+
+    /// Fetch all currently running runs
+    public func fetchRunningRuns() throws -> [ScriptRun] {
+        try db.fetchRunningRuns()
+    }
+
+    /// Fetch a running run for a specific script
+    public func fetchRunningRun(scriptId: UUID) throws -> ScriptRun? {
+        try db.fetchRunningRun(scriptId: scriptId)
+    }
+
+    /// Fetch average run duration for a specific script
+    public func fetchAverageDuration(scriptId: UUID) throws -> TimeInterval? {
+        try db.fetchAverageDuration(scriptId: scriptId)
+    }
+
+    /// Fetch average durations for all scripts
+    public func fetchAllAverageDurations() throws -> [UUID: TimeInterval] {
+        try db.fetchAllAverageDurations()
     }
 }

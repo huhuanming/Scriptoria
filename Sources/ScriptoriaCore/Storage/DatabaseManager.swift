@@ -97,6 +97,12 @@ public final class DatabaseManager: Sendable {
             }
         }
 
+        migrator.registerMigration("v3") { db in
+            try db.alter(table: "script_runs") { t in
+                t.add(column: "pid", .integer)
+            }
+        }
+
         return migrator
     }
 
@@ -255,15 +261,106 @@ public final class DatabaseManager: Sendable {
         try dbPool.write { db in
             try db.execute(
                 sql: """
-                    INSERT INTO script_runs (id, scriptId, scriptTitle, startedAt, finishedAt, status, exitCode, output, errorOutput)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    INSERT INTO script_runs (id, scriptId, scriptTitle, startedAt, finishedAt, status, exitCode, output, errorOutput, pid)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                 arguments: [
                     run.id.uuidString, run.scriptId.uuidString, run.scriptTitle,
                     run.startedAt, run.finishedAt, run.status.rawValue,
-                    run.exitCode.map { Int($0) }, run.output, run.errorOutput
+                    run.exitCode.map { Int($0) }, run.output, run.errorOutput,
+                    run.pid.map { Int($0) }
                 ]
             )
+        }
+    }
+
+    public func updateScriptRun(_ run: ScriptRun) throws {
+        try dbPool.write { db in
+            try db.execute(
+                sql: """
+                    UPDATE script_runs SET finishedAt=?, status=?, exitCode=?, output=?, errorOutput=?, pid=?
+                    WHERE id=?
+                    """,
+                arguments: [
+                    run.finishedAt, run.status.rawValue,
+                    run.exitCode.map { Int($0) }, run.output, run.errorOutput,
+                    run.pid.map { Int($0) },
+                    run.id.uuidString
+                ]
+            )
+        }
+    }
+
+    public func fetchScriptRun(id: UUID) throws -> ScriptRun? {
+        try dbPool.read { db in
+            guard let row = try Row.fetchOne(
+                db,
+                sql: "SELECT * FROM script_runs WHERE id = ?",
+                arguments: [id.uuidString]
+            ) else { return nil }
+            return self.scriptRunFromRow(row)
+        }
+    }
+
+    public func fetchRunningRuns() throws -> [ScriptRun] {
+        try dbPool.read { db in
+            let rows = try Row.fetchAll(
+                db,
+                sql: "SELECT * FROM script_runs WHERE status = ? ORDER BY startedAt DESC",
+                arguments: [RunStatus.running.rawValue]
+            )
+            return rows.map { row in self.scriptRunFromRow(row) }
+        }
+    }
+
+    /// Compute average duration (in seconds) for completed runs of a script
+    public func fetchAverageDuration(scriptId: UUID) throws -> TimeInterval? {
+        try dbPool.read { db in
+            let row = try Row.fetchOne(
+                db,
+                sql: """
+                    SELECT AVG(julianday(finishedAt) - julianday(startedAt)) * 86400.0 as avgDuration
+                    FROM script_runs
+                    WHERE scriptId = ? AND finishedAt IS NOT NULL AND status IN ('success', 'failure')
+                    """,
+                arguments: [scriptId.uuidString]
+            )
+            guard let row, let avg: Double = row["avgDuration"] else { return nil }
+            return avg > 0 ? avg : nil
+        }
+    }
+
+    /// Compute average duration (in seconds) for all scripts that have completed runs
+    public func fetchAllAverageDurations() throws -> [UUID: TimeInterval] {
+        try dbPool.read { db in
+            let rows = try Row.fetchAll(
+                db,
+                sql: """
+                    SELECT scriptId, AVG(julianday(finishedAt) - julianday(startedAt)) * 86400.0 as avgDuration
+                    FROM script_runs
+                    WHERE finishedAt IS NOT NULL AND status IN ('success', 'failure')
+                    GROUP BY scriptId
+                    """
+            )
+            var result: [UUID: TimeInterval] = [:]
+            for row in rows {
+                if let id = UUID(uuidString: row["scriptId"] as String),
+                   let avg: Double = row["avgDuration"], avg > 0 {
+                    result[id] = avg
+                }
+            }
+            return result
+        }
+    }
+
+    public func fetchRunningRun(scriptId: UUID) throws -> ScriptRun? {
+        try dbPool.read { db in
+            guard let row = try Row.fetchOne(
+                db,
+                sql: "SELECT * FROM script_runs WHERE scriptId = ? AND status = ? ORDER BY startedAt DESC LIMIT 1",
+                arguments: [scriptId.uuidString, RunStatus.running.rawValue]
+            ) else { return nil }
+            return self.scriptRunFromRow(row)
         }
     }
 
@@ -490,6 +587,7 @@ public final class DatabaseManager: Sendable {
 
     private func scriptRunFromRow(_ row: Row) -> ScriptRun {
         let exitCodeInt: Int? = row["exitCode"]
+        let pidInt: Int? = row["pid"]
         return ScriptRun(
             id: UUID(uuidString: row["id"] as String)!,
             scriptId: UUID(uuidString: row["scriptId"] as String)!,
@@ -499,7 +597,8 @@ public final class DatabaseManager: Sendable {
             status: RunStatus(rawValue: row["status"] as String) ?? .failure,
             exitCode: exitCodeInt.map { Int32($0) },
             output: row["output"],
-            errorOutput: row["errorOutput"]
+            errorOutput: row["errorOutput"],
+            pid: pidInt.map { Int32($0) }
         )
     }
 

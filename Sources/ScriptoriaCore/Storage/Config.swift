@@ -44,6 +44,11 @@ public struct Config: Codable, Sendable {
         "\(dataDirectory)/db"
     }
 
+    /// Logs subdirectory within the data directory
+    public var logsDirectory: String {
+        "\(dataDirectory)/logs"
+    }
+
     /// Pointer file: a tiny file at the default location that tells us where the real data directory is.
     private static var pointerFilePath: String {
         let home = FileManager.default.homeDirectoryForCurrentUser.path
