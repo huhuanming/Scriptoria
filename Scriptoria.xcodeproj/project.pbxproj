@@ -16,6 +16,7 @@
 		AD4CC9D6D339E6656981A49C /* ScheduleView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 926885C9F5B17D4FE43B7DED /* ScheduleView.swift */; };
 		B76B2B08A4F11C853B7B7777 /* AllSchedulesView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2FDC65F4310EFA49277C47E8 /* AllSchedulesView.swift */; };
 		C6CCFA4BA9270DC3DF63F9AF /* AddScriptSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = C1B5C87085FA75C7D7F4F73F /* AddScriptSheet.swift */; };
+		ED30B7341DB4D991E93A9333 /* Theme.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1E48F0320DA436D78535A30 /* Theme.swift */; };
 		F8965BFC7FD0BC00A237F7C0 /* MainWindowView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 534A295C452035CF45B5B0D6 /* MainWindowView.swift */; };
 /* End PBXBuildFile section */
 
@@ -28,6 +29,7 @@
 		7828AA1B9D9E8F4ABB338426 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
 		8F1189A738FE4A29534EEF76 /* Scriptoria.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Scriptoria.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		926885C9F5B17D4FE43B7DED /* ScheduleView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScheduleView.swift; sourceTree = "<group>"; };
+		B1E48F0320DA436D78535A30 /* Theme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Theme.swift; sourceTree = "<group>"; };
 		C1B5C87085FA75C7D7F4F73F /* AddScriptSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AddScriptSheet.swift; sourceTree = "<group>"; };
 		DBCD790DB86E129E5B8AAC27 /* ScriptDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScriptDetailView.swift; sourceTree = "<group>"; };
 		E0F91808AB2E96360CCD7166 /* Scriptoria */ = {isa = PBXFileReference; lastKnownFileType = folder; name = Scriptoria; path = .; sourceTree = SOURCE_ROOT; };
@@ -61,6 +63,14 @@
 				FE120ED0408898AB96B655FF /* MenuBarPanel.swift */,
 			);
 			path = MenuBar;
+			sourceTree = "<group>";
+		};
+		3B2B91CEE4B0CA3AA894EA28 /* Styles */ = {
+			isa = PBXGroup;
+			children = (
+				B1E48F0320DA436D78535A30 /* Theme.swift */,
+			);
+			path = Styles;
 			sourceTree = "<group>";
 		};
 		8D523325928C99445B85E285 /* Packages */ = {
@@ -99,6 +109,7 @@
 				41F53EBF447399BC36FEC18B /* AppState.swift */,
 				001CC86E19769AC65E40D004 /* Scriptoria.entitlements */,
 				314C4B3F5DEE48EE23608935 /* ScriptoriaApp.swift */,
+				3B2B91CEE4B0CA3AA894EA28 /* Styles */,
 				B542B823D7ED98569BAD9853 /* Views */,
 			);
 			name = ScriptoriaApp;
@@ -182,6 +193,7 @@
 				14C5032478AD8E0E40750609 /* ScriptDetailView.swift in Sources */,
 				1101D4D75F95D6E5C61D9762 /* ScriptoriaApp.swift in Sources */,
 				6836D847EB2FB81F93BF6865 /* SettingsView.swift in Sources */,
+				ED30B7341DB4D991E93A9333 /* Theme.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

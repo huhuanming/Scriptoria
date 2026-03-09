@@ -12,7 +12,7 @@ struct SearchCommand: AsyncParsableCommand {
     var query: String
 
     func run() async throws {
-        let store = ScriptStore()
+        let store = ScriptStore.fromConfig()
         try await store.load()
 
         let results = store.search(query: query)

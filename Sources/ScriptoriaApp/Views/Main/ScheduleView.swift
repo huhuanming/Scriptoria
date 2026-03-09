@@ -68,19 +68,25 @@ struct ScheduleRow: View {
 
     var body: some View {
         HStack(spacing: 10) {
-            // Enable/disable toggle
             Button {
-                Task { await appState.toggleSchedule(schedule) }
+                Task {
+                    await appState.toggleSchedule(schedule)
+                }
             } label: {
-                Image(systemName: schedule.isEnabled ? "checkmark.circle.fill" : "circle")
-                    .font(.body)
-                    .foregroundStyle(schedule.isEnabled ? .green : .gray)
+                ZStack {
+                    Circle()
+                        .fill(schedule.isEnabled ? AnyShapeStyle(Theme.successColor.opacity(0.12)) : AnyShapeStyle(.quaternary.opacity(0.3)))
+                        .frame(width: 24, height: 24)
+                    Image(systemName: schedule.isEnabled ? "checkmark" : "pause")
+                        .font(.system(size: 9, weight: .bold))
+                        .foregroundStyle(schedule.isEnabled ? Theme.successColor : .secondary)
+                }
             }
             .buttonStyle(.plain)
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(schedule.type.displayText)
-                    .font(.body)
+                    .font(.callout)
                     .foregroundStyle(schedule.isEnabled ? .primary : .secondary)
 
                 if let next = schedule.nextRunAt, schedule.isEnabled {
@@ -92,11 +98,8 @@ struct ScheduleRow: View {
 
             Spacer()
 
-            // launchd status
             let installed = LaunchdHelper.isInstalled(scheduleId: schedule.id)
-            Image(systemName: installed ? "bolt.fill" : "bolt.slash")
-                .font(.caption)
-                .foregroundStyle(installed ? .green : .gray)
+            StatusDot(color: installed ? Theme.successColor : .gray, size: 6)
                 .help(installed ? "Active in launchd" : "Not active")
 
             if isHovering {
@@ -105,20 +108,21 @@ struct ScheduleRow: View {
                 } label: {
                     Image(systemName: "trash")
                         .font(.caption)
-                        .foregroundStyle(.red)
+                        .foregroundStyle(Theme.failureColor)
                 }
                 .buttonStyle(.plain)
-                .transition(.opacity)
+                .transition(.scale.combined(with: .opacity))
             }
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 8)
         .background(
-            RoundedRectangle(cornerRadius: 6)
-                .fill(.quaternary.opacity(isHovering ? 0.5 : 0.2))
+            RoundedRectangle(cornerRadius: 8)
+                .fill(isHovering ? AnyShapeStyle(.quaternary.opacity(0.4)) : AnyShapeStyle(.quaternary.opacity(0.15)))
         )
+        .contentShape(Rectangle())
         .onHover { h in
-            withAnimation(.easeInOut(duration: 0.15)) { isHovering = h }
+            withAnimation(Theme.fadeQuick) { isHovering = h }
         }
     }
 }

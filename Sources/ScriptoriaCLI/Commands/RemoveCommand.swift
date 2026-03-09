@@ -12,7 +12,7 @@ struct RemoveCommand: AsyncParsableCommand {
     var identifier: String
 
     func run() async throws {
-        let store = ScriptStore()
+        let store = ScriptStore.fromConfig()
         try await store.load()
 
         let script: Script?

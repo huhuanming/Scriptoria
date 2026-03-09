@@ -1,0 +1,36 @@
+name: Scriptoria
+options:
+  bundleIdPrefix: com.scriptoria
+  deploymentTarget:
+    macOS: "15.0"
+  xcodeVersion: "16.0"
+  minimumXcodeGenVersion: "2.30"
+
+packages:
+  ScriptoriaCore:
+    path: .
+
+targets:
+  Scriptoria:
+    type: application
+    platform: macOS
+    sources:
+      - Sources/ScriptoriaApp
+    dependencies:
+      - package: ScriptoriaCore
+        product: ScriptoriaCore
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.scriptoria.app
+        PRODUCT_NAME: Scriptoria
+        MARKETING_VERSION: "0.1.0"
+        CURRENT_PROJECT_VERSION: 1
+        INFOPLIST_KEY_LSUIElement: true
+        INFOPLIST_KEY_CFBundleDisplayName: Scriptoria
+        SWIFT_VERSION: "6.0"
+        MACOSX_DEPLOYMENT_TARGET: "15.0"
+        GENERATE_INFOPLIST_FILE: true
+    entitlements:
+      path: Sources/ScriptoriaApp/Scriptoria.entitlements
+      properties:
+        com.apple.security.app-sandbox: false

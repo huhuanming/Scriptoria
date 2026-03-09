@@ -24,7 +24,7 @@ struct AddCommand: AsyncParsableCommand {
     var tags: String?
 
     func run() async throws {
-        let store = ScriptStore()
+        let store = ScriptStore.fromConfig()
         try await store.load()
 
         // Resolve path

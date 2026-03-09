@@ -9,7 +9,7 @@ struct TagsCommand: AsyncParsableCommand {
     )
 
     func run() async throws {
-        let store = ScriptStore()
+        let store = ScriptStore.fromConfig()
         try await store.load()
 
         let tags = store.allTags()

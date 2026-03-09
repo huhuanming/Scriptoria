@@ -6,8 +6,19 @@ public final class ScriptStore: @unchecked Sendable {
     private var scripts: [Script] = []
     private let lock = NSLock()
 
+    /// Create a store using an explicit directory
     public init(baseDirectory: String? = nil) {
         self.storage = StorageManager(baseDirectory: baseDirectory)
+    }
+
+    /// Create a store using the directory from Config
+    public convenience init(config: Config) {
+        self.init(baseDirectory: config.dataDirectory)
+    }
+
+    /// Create a store using the saved config (reads ~/.scriptoria/config.json)
+    public static func fromConfig() -> ScriptStore {
+        ScriptStore(config: Config.load())
     }
 
     // MARK: - Lifecycle

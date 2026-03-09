@@ -18,7 +18,7 @@ struct ListCommand: AsyncParsableCommand {
     var recent: Bool = false
 
     func run() async throws {
-        let store = ScriptStore()
+        let store = ScriptStore.fromConfig()
         try await store.load()
 
         let scripts: [Script]
