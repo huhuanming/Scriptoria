@@ -75,6 +75,22 @@ public enum Interpreter: String, Codable, Sendable, CaseIterable {
         case .binary: return nil
         }
     }
+
+    /// The executable name used for runtime resolution via `which`
+    public var executableName: String {
+        switch self {
+        case .auto: return "sh"
+        case .bash: return "bash"
+        case .zsh: return "zsh"
+        case .sh: return "sh"
+        case .node: return "node"
+        case .python: return "python"
+        case .python3: return "python3"
+        case .ruby: return "ruby"
+        case .osascript: return "osascript"
+        case .binary: return ""
+        }
+    }
 }
 
 /// Status of a script run

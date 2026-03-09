@@ -23,7 +23,17 @@ public final class ScriptRunner: Sendable {
         if interpreter == .binary {
             process.executableURL = URL(fileURLWithPath: script.path)
         } else if let execPath = interpreter.executablePath {
-            process.executableURL = URL(fileURLWithPath: execPath)
+            // For interpreters that may be installed via version managers (nvm, pyenv, etc.),
+            // resolve the actual path at runtime if the hardcoded path doesn't exist.
+            let resolvedPath: String
+            if FileManager.default.fileExists(atPath: execPath) {
+                resolvedPath = execPath
+            } else if let found = ScriptRunner.resolveExecutable(interpreter.executableName) {
+                resolvedPath = found
+            } else {
+                resolvedPath = execPath
+            }
+            process.executableURL = URL(fileURLWithPath: resolvedPath)
             process.arguments = [script.path]
         } else {
             // Fallback: use /bin/sh
@@ -35,9 +45,9 @@ public final class ScriptRunner: Sendable {
         let scriptDir = URL(fileURLWithPath: script.path).deletingLastPathComponent()
         process.currentDirectoryURL = scriptDir
 
-        // Inherit environment and add common paths
-        var env = ProcessInfo.processInfo.environment
-        let extraPaths = ["/usr/local/bin", "/opt/homebrew/bin", "/usr/local/opt/node/bin"]
+        // Inherit full login shell environment (critical for launchd which has minimal PATH)
+        var env = ScriptRunner.loginShellEnvironment() ?? ProcessInfo.processInfo.environment
+        let extraPaths = ["/usr/local/bin", "/opt/homebrew/bin"]
         if let existingPath = env["PATH"] {
             env["PATH"] = (extraPaths + [existingPath]).joined(separator: ":")
         }
@@ -65,6 +75,60 @@ public final class ScriptRunner: Sendable {
         }
 
         return record
+    }
+
+    // MARK: - Environment Resolution
+
+    /// Resolve the full PATH and environment from the user's login shell.
+    /// This ensures nvm, homebrew, and other tools are available even under launchd.
+    private static func loginShellEnvironment() -> [String: String]? {
+        let shell = ProcessInfo.processInfo.environment["SHELL"] ?? "/bin/zsh"
+        let proc = Process()
+        let pipe = Pipe()
+        proc.executableURL = URL(fileURLWithPath: shell)
+        proc.arguments = ["-i", "-l", "-c", "env"]
+        proc.standardOutput = pipe
+        proc.standardError = Pipe()
+        proc.environment = ["HOME": NSHomeDirectory(), "USER": NSUserName()]
+        do {
+            try proc.run()
+            proc.waitUntilExit()
+            guard proc.terminationStatus == 0 else { return nil }
+            let data = pipe.fileHandleForReading.readDataToEndOfFile()
+            guard let output = String(data: data, encoding: .utf8) else { return nil }
+            var env: [String: String] = [:]
+            for line in output.split(separator: "\n") {
+                let parts = line.split(separator: "=", maxSplits: 1)
+                if parts.count == 2 {
+                    env[String(parts[0])] = String(parts[1])
+                }
+            }
+            return env.isEmpty ? nil : env
+        } catch {
+            return nil
+        }
+    }
+
+    /// Resolve an interpreter executable via the user's login shell (handles nvm, etc.)
+    private static func resolveExecutable(_ name: String) -> String? {
+        let shell = ProcessInfo.processInfo.environment["SHELL"] ?? "/bin/zsh"
+        let proc = Process()
+        let pipe = Pipe()
+        proc.executableURL = URL(fileURLWithPath: shell)
+        proc.arguments = ["-i", "-l", "-c", "which \(name)"]
+        proc.standardOutput = pipe
+        proc.standardError = Pipe()
+        proc.environment = ["HOME": NSHomeDirectory(), "USER": NSUserName()]
+        do {
+            try proc.run()
+            proc.waitUntilExit()
+            guard proc.terminationStatus == 0 else { return nil }
+            let data = pipe.fileHandleForReading.readDataToEndOfFile()
+            let path = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines)
+            return (path?.isEmpty == false) ? path : nil
+        } catch {
+            return nil
+        }
     }
 
     /// Detect interpreter from file extension or shebang
