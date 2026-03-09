@@ -16,7 +16,7 @@ public final class LaunchdHelper: Sendable {
 
         var plist: [String: Any] = [
             "Label": plistName,
-            "ProgramArguments": [cliPath, "run", "--id", schedule.scriptId.uuidString],
+            "ProgramArguments": [cliPath, "run", "--id", schedule.scriptId.uuidString, "--scheduled"],
             "StandardOutPath": "/tmp/scriptoria-\(schedule.id.uuidString).log",
             "StandardErrorPath": "/tmp/scriptoria-\(schedule.id.uuidString).err",
         ]

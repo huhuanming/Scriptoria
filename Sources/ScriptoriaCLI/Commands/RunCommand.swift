@@ -17,8 +17,11 @@ struct RunCommand: AsyncParsableCommand {
     @Flag(name: .long, help: "Send notification on completion")
     var notify: Bool = false
 
+    @Flag(name: .long, help: "Scheduled run (auto-notify, less output)")
+    var scheduled: Bool = false
+
     func run() async throws {
-        let store = ScriptStore()
+        let store = ScriptStore.fromConfig()
         try await store.load()
 
         // Find the script
@@ -67,8 +70,8 @@ struct RunCommand: AsyncParsableCommand {
         let duration = result.duration.map { String(format: "%.2fs", $0) } ?? "?"
         print("\(icon) \(result.status.rawValue) (exit: \(result.exitCode ?? -1), duration: \(duration))")
 
-        // Notification
-        if notify {
+        // Notification (always notify for scheduled runs)
+        if notify || scheduled {
             await NotificationManager.shared.notifyRunComplete(result)
         }
 
