@@ -4,7 +4,8 @@ import ScriptoriaCore
 /// First-launch onboarding: asks user to pick a data directory
 struct OnboardingView: View {
     @EnvironmentObject var appState: AppState
-    @Binding var isPresented: Bool
+    @Environment(\.dismissWindow) private var dismissWindow
+    @Environment(\.openWindow) private var openWindow
 
     @State private var selectedPath: String = Config.defaultDataDirectory
     @State private var selectedOption: StorageOption = .local
@@ -46,7 +47,6 @@ struct OnboardingView: View {
                 Text("Where should Scriptoria store your scripts and data?")
                     .font(.callout)
 
-                // Options
                 VStack(spacing: 8) {
                     optionRow(.local, icon: "internaldrive", title: "Local", subtitle: Config.defaultDataDirectory)
                     optionRow(.icloud, icon: "icloud", title: "iCloud Drive", subtitle: Config.iCloudDataDirectory)
@@ -67,7 +67,7 @@ struct OnboardingView: View {
                 Spacer()
                 Button("Get Started") {
                     Task {
-                        await setupAndDismiss()
+                        await completeOnboarding()
                     }
                 }
                 .buttonStyle(.borderedProminent)
@@ -133,7 +133,7 @@ struct OnboardingView: View {
         .buttonStyle(.plain)
     }
 
-    private func setupAndDismiss() async {
+    private func completeOnboarding() async {
         // Save config
         let config = Config(dataDirectory: selectedPath)
         try? config.save()
@@ -142,18 +142,19 @@ struct OnboardingView: View {
         await createExampleScript(in: selectedPath)
 
         // Reload app state
+        appState.needsOnboarding = false
         await appState.reloadWithConfig(config)
 
-        isPresented = false
+        // Close onboarding, open main window
+        dismissWindow(id: "onboarding")
+        openWindow(id: "main")
     }
 
     private func createExampleScript(in directory: String) async {
-        // Ensure directory exists
         try? FileManager.default.createDirectory(
             atPath: directory, withIntermediateDirectories: true
         )
 
-        // Create example hello world script
         let scriptPath = "\(directory)/hello-world.sh"
         let scriptContent = """
         #!/bin/bash
@@ -179,7 +180,6 @@ struct OnboardingView: View {
             ofItemAtPath: scriptPath
         )
 
-        // Add to scripts.json
         let script = Script(
             title: "Hello World",
             description: "Welcome example script - feel free to remove",

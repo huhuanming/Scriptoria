@@ -169,12 +169,7 @@ struct MenuBarPanel: View {
         }
         .frame(width: 330)
         .task {
-            if appState.needsOnboarding {
-                // Open the main window for onboarding
-                openWindow(id: "main")
-            } else {
-                await appState.loadScripts()
-            }
+            await appState.loadScripts()
         }
     }
 }

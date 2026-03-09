@@ -4,7 +4,7 @@ import ScriptoriaCore
 @main
 struct ScriptoriaApp: App {
     @StateObject private var appState = AppState()
-    @Environment(\.openWindow) private var openWindow
+    @NSApplicationDelegateAdaptor(ScriptoriaAppDelegate.self) var appDelegate
 
     var body: some Scene {
         // Menu bar (primary interface)
@@ -21,23 +21,26 @@ struct ScriptoriaApp: App {
         }
         .menuBarExtraStyle(.window)
 
+        // Onboarding window (first launch only, auto-opens)
+        Window("Welcome to Scriptoria", id: "onboarding") {
+            OnboardingView()
+                .environmentObject(appState)
+        }
+        .windowStyle(.titleBar)
+        .windowResizability(.contentSize)
+        .defaultPosition(.center)
+        .defaultLaunchBehavior(appState.needsOnboarding ? .presented : .suppressed)
+
         // Main window
         Window("Scriptoria", id: "main") {
-            Group {
-                if appState.needsOnboarding {
-                    OnboardingView(isPresented: $appState.needsOnboarding)
-                        .environmentObject(appState)
-                } else {
-                    MainWindowView()
-                        .environmentObject(appState)
-                        .frame(minWidth: 800, minHeight: 520)
-                }
-            }
+            MainWindowView()
+                .environmentObject(appState)
+                .frame(minWidth: 800, minHeight: 520)
         }
         .windowStyle(.titleBar)
         .windowToolbarStyle(.unified(showsTitle: true))
-        .defaultSize(width: appState.needsOnboarding ? 520 : 1000,
-                      height: appState.needsOnboarding ? 480 : 660)
+        .defaultSize(width: 1000, height: 660)
+        .defaultLaunchBehavior(.suppressed)
 
         // Settings
         Settings {
