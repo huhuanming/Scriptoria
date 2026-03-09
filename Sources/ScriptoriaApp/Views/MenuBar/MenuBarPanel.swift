@@ -168,13 +168,10 @@ struct MenuBarPanel: View {
             .padding(.vertical, 8)
         }
         .frame(width: 330)
-        .sheet(isPresented: $appState.needsOnboarding) {
-            OnboardingView(isPresented: $appState.needsOnboarding)
-                .environmentObject(appState)
-        }
         .task {
             if appState.needsOnboarding {
-                // Will show onboarding sheet
+                // Open the main window for onboarding
+                openWindow(id: "main")
             } else {
                 await appState.loadScripts()
             }

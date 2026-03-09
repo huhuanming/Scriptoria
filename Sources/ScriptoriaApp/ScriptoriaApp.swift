@@ -23,13 +23,21 @@ struct ScriptoriaApp: App {
 
         // Main window
         Window("Scriptoria", id: "main") {
-            MainWindowView()
-                .environmentObject(appState)
-                .frame(minWidth: 800, minHeight: 520)
+            Group {
+                if appState.needsOnboarding {
+                    OnboardingView(isPresented: $appState.needsOnboarding)
+                        .environmentObject(appState)
+                } else {
+                    MainWindowView()
+                        .environmentObject(appState)
+                        .frame(minWidth: 800, minHeight: 520)
+                }
+            }
         }
         .windowStyle(.titleBar)
         .windowToolbarStyle(.unified(showsTitle: true))
-        .defaultSize(width: 1000, height: 660)
+        .defaultSize(width: appState.needsOnboarding ? 520 : 1000,
+                      height: appState.needsOnboarding ? 480 : 660)
 
         // Settings
         Settings {
