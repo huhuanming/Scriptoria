@@ -91,6 +91,12 @@ public final class DatabaseManager: Sendable {
             )
         }
 
+        migrator.registerMigration("v2") { db in
+            try db.alter(table: "scripts") { t in
+                t.add(column: "skill", .text).notNull().defaults(to: "")
+            }
+        }
+
         return migrator
     }
 
@@ -199,13 +205,13 @@ public final class DatabaseManager: Sendable {
             updated.updatedAt = Date()
             try db.execute(
                 sql: """
-                    UPDATE scripts SET title=?, description=?, path=?, interpreter=?,
+                    UPDATE scripts SET title=?, description=?, path=?, skill=?, interpreter=?,
                     isFavorite=?, createdAt=?, updatedAt=?, lastRunAt=?, lastRunStatus=?, runCount=?
                     WHERE id=?
                     """,
                 arguments: [
                     updated.title, updated.description, updated.path,
-                    updated.interpreter.rawValue, updated.isFavorite,
+                    updated.skill, updated.interpreter.rawValue, updated.isFavorite,
                     updated.createdAt, updated.updatedAt,
                     updated.lastRunAt, updated.lastRunStatus?.rawValue,
                     updated.runCount, updated.id.uuidString
@@ -440,12 +446,12 @@ public final class DatabaseManager: Sendable {
     private func insertScriptRow(_ script: Script, db: Database) throws {
         try db.execute(
             sql: """
-                INSERT INTO scripts (id, title, description, path, interpreter, isFavorite, createdAt, updatedAt, lastRunAt, lastRunStatus, runCount)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO scripts (id, title, description, path, skill, interpreter, isFavorite, createdAt, updatedAt, lastRunAt, lastRunStatus, runCount)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
             arguments: [
                 script.id.uuidString, script.title, script.description, script.path,
-                script.interpreter.rawValue, script.isFavorite,
+                script.skill, script.interpreter.rawValue, script.isFavorite,
                 script.createdAt, script.updatedAt,
                 script.lastRunAt, script.lastRunStatus?.rawValue,
                 script.runCount
@@ -470,6 +476,7 @@ public final class DatabaseManager: Sendable {
             title: row["title"],
             description: row["description"],
             path: row["path"],
+            skill: row["skill"],
             interpreter: Interpreter(rawValue: row["interpreter"]) ?? .auto,
             tags: tags,
             isFavorite: row["isFavorite"],

@@ -187,7 +187,34 @@ struct ScriptDetailView: View {
                 .help("Reveal in Finder")
             }
             .padding(.horizontal, 20)
-            .padding(.bottom, 16)
+            .padding(.bottom, script.skill.isEmpty ? 16 : 8)
+
+            // Skill
+            if !script.skill.isEmpty {
+                HStack(spacing: 8) {
+                    Image(systemName: "brain")
+                        .font(.caption)
+                        .foregroundStyle(.tertiary)
+                    Text(script.skill)
+                        .font(.system(.caption, design: .monospaced))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                        .textSelection(.enabled)
+                    Spacer()
+                    Button {
+                        NSWorkspace.shared.selectFile(script.skill, inFileViewerRootedAtPath: "")
+                    } label: {
+                        Image(systemName: "arrow.right.circle")
+                            .font(.caption)
+                            .foregroundStyle(.tertiary)
+                    }
+                    .buttonStyle(.plain)
+                    .help("Reveal in Finder")
+                }
+                .padding(.horizontal, 20)
+                .padding(.bottom, 16)
+            }
         }
     }
 

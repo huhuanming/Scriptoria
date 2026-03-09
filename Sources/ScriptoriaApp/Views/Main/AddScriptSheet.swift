@@ -9,6 +9,7 @@ struct AddScriptSheet: View {
     @State private var title = ""
     @State private var description = ""
     @State private var path = ""
+    @State private var skill = ""
     @State private var interpreter: Interpreter = .auto
     @State private var tagsInput = ""
     @State private var isFavorite = false
@@ -46,6 +47,18 @@ struct AddScriptSheet: View {
                     }
                 }
 
+                HStack {
+                    TextField("Skill File (for AI agents)", text: $skill)
+                    Button("Browse...") {
+                        let panel = NSOpenPanel()
+                        panel.allowsMultipleSelection = false
+                        panel.canChooseDirectories = false
+                        if panel.runModal() == .OK, let url = panel.url {
+                            skill = url.path
+                        }
+                    }
+                }
+
                 Picker("Interpreter", selection: $interpreter) {
                     ForEach(Interpreter.allCases, id: \.self) { interp in
                         Text(interp.rawValue).tag(interp)
@@ -77,10 +90,18 @@ struct AddScriptSheet: View {
                             resolvedPath = path
                         }
 
+                        let resolvedSkill: String
+                        if skill.hasPrefix("~") {
+                            resolvedSkill = NSString(string: skill).expandingTildeInPath
+                        } else {
+                            resolvedSkill = skill
+                        }
+
                         let script = Script(
                             title: title,
                             description: description,
                             path: resolvedPath,
+                            skill: resolvedSkill,
                             interpreter: interpreter,
                             tags: tags,
                             isFavorite: isFavorite
@@ -94,7 +115,7 @@ struct AddScriptSheet: View {
             }
             .padding(20)
         }
-        .frame(width: 480, height: 420)
+        .frame(width: 480, height: 480)
     }
 }
 
@@ -107,6 +128,7 @@ struct EditScriptSheet: View {
     @State private var title: String
     @State private var description: String
     @State private var path: String
+    @State private var skill: String
     @State private var interpreter: Interpreter
     @State private var tagsInput: String
     @State private var isFavorite: Bool
@@ -117,6 +139,7 @@ struct EditScriptSheet: View {
         self._title = State(initialValue: script.title)
         self._description = State(initialValue: script.description)
         self._path = State(initialValue: script.path)
+        self._skill = State(initialValue: script.skill)
         self._interpreter = State(initialValue: script.interpreter)
         self._tagsInput = State(initialValue: script.tags.joined(separator: ", "))
         self._isFavorite = State(initialValue: script.isFavorite)
@@ -151,6 +174,18 @@ struct EditScriptSheet: View {
                     }
                 }
 
+                HStack {
+                    TextField("Skill File (for AI agents)", text: $skill)
+                    Button("Browse...") {
+                        let panel = NSOpenPanel()
+                        panel.allowsMultipleSelection = false
+                        panel.canChooseDirectories = false
+                        if panel.runModal() == .OK, let url = panel.url {
+                            skill = url.path
+                        }
+                    }
+                }
+
                 Picker("Interpreter", selection: $interpreter) {
                     ForEach(Interpreter.allCases, id: \.self) { interp in
                         Text(interp.rawValue).tag(interp)
@@ -173,10 +208,18 @@ struct EditScriptSheet: View {
                             .map { String($0).trimmingCharacters(in: .whitespaces) }
                             .filter { !$0.isEmpty }
 
+                        let resolvedSkill: String
+                        if skill.hasPrefix("~") {
+                            resolvedSkill = NSString(string: skill).expandingTildeInPath
+                        } else {
+                            resolvedSkill = skill
+                        }
+
                         var updated = script
                         updated.title = title
                         updated.description = description
                         updated.path = path
+                        updated.skill = resolvedSkill
                         updated.interpreter = interpreter
                         updated.tags = tags
                         updated.isFavorite = isFavorite
@@ -189,6 +232,6 @@ struct EditScriptSheet: View {
             }
             .padding(20)
         }
-        .frame(width: 480, height: 420)
+        .frame(width: 480, height: 480)
     }
 }

@@ -57,6 +57,10 @@ struct ListCommand: AsyncParsableCommand {
                 print("       \(script.description)")
             }
 
+            if !script.skill.isEmpty {
+                print("       🤖 Skill: \(script.skill)")
+            }
+
             let shortId = String(script.id.uuidString.prefix(8))
             let tags = script.tags.isEmpty ? "" : " [\(script.tags.joined(separator: ", "))]"
             print("       \(shortId) · \(script.interpreter.rawValue)\(tags) · runs: \(script.runCount)")

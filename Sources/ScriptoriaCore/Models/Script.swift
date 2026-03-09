@@ -6,6 +6,7 @@ public struct Script: Codable, Identifiable, Sendable {
     public var title: String
     public var description: String
     public var path: String
+    public var skill: String
     public var interpreter: Interpreter
     public var tags: [String]
     public var isFavorite: Bool
@@ -20,6 +21,7 @@ public struct Script: Codable, Identifiable, Sendable {
         title: String,
         description: String = "",
         path: String,
+        skill: String = "",
         interpreter: Interpreter = .auto,
         tags: [String] = [],
         isFavorite: Bool = false,
@@ -33,6 +35,7 @@ public struct Script: Codable, Identifiable, Sendable {
         self.title = title
         self.description = description
         self.path = path
+        self.skill = skill
         self.interpreter = interpreter
         self.tags = tags
         self.isFavorite = isFavorite
