@@ -13,13 +13,23 @@ metadata:
 
 Manage, run, and schedule shell scripts on macOS via the `scriptoria` CLI.
 
+## File Conventions
+
+When creating new scripts or skill files, always place them under the Scriptoria config directory:
+
+- **Scripts** → `~/.scriptoria/scripts/` (e.g. `~/.scriptoria/scripts/my-task.sh`)
+- **Skills** → `~/.scriptoria/skills/<name>/SKILL.md` (e.g. `~/.scriptoria/skills/my-skill/SKILL.md`)
+
+**IMPORTANT: All scripts and skill files MUST be written under `~/.scriptoria/`. Never write to `/tmp`, project directories, or any other location.** Keeping everything in `~/.scriptoria/` ensures easy backup, migration, and prevents files from being lost.
+
 ## Quick Start: Creating a Task (Full Example)
 
 Here's how to create, register, test, and schedule a script — end to end:
 
 ```bash
 # 1. Write the script
-cat > /tmp/disk-usage-alert.sh << 'SCRIPT'
+mkdir -p ~/.scriptoria/scripts
+cat > ~/.scriptoria/scripts/disk-usage-alert.sh << 'SCRIPT'
 #!/bin/bash
 # Alert if disk usage exceeds 80%
 USAGE=$(df -h / | awk 'NR==2 {gsub(/%/,""); print $5}')
@@ -30,10 +40,10 @@ if [ "$USAGE" -gt 80 ]; then
 fi
 echo "Disk usage is normal."
 SCRIPT
-chmod +x /tmp/disk-usage-alert.sh
+chmod +x ~/.scriptoria/scripts/disk-usage-alert.sh
 
 # 2. Add to Scriptoria
-scriptoria add /tmp/disk-usage-alert.sh \
+scriptoria add ~/.scriptoria/scripts/disk-usage-alert.sh \
   --title "Disk Usage Alert" \
   --description "Check if root disk usage exceeds 80%" \
   --interpreter bash \
@@ -138,12 +148,12 @@ scriptoria config set-dir ~/data    # Change data directory
 
 ```bash
 # Write → Add → Test → Schedule
-cat > /tmp/check.sh << 'SCRIPT'
+cat > ~/.scriptoria/scripts/check.sh << 'SCRIPT'
 #!/bin/bash
 curl -sf https://example.com/health && echo "OK" || exit 1
 SCRIPT
-chmod +x /tmp/check.sh
-scriptoria add /tmp/check.sh --title "Health Check" --tags "monitoring"
+chmod +x ~/.scriptoria/scripts/check.sh
+scriptoria add ~/.scriptoria/scripts/check.sh --title "Health Check" --tags "monitoring"
 scriptoria run "Health Check"
 scriptoria schedule add "Health Check" --every 15
 ```
