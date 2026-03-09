@@ -76,6 +76,15 @@ final class AppState: ObservableObject {
 
     // MARK: - Schedule Management
 
+    func reloadSchedules() async {
+        do {
+            try await scheduleStore.load()
+            schedules = scheduleStore.all()
+        } catch {
+            print("Failed to reload schedules: \(error)")
+        }
+    }
+
     func schedulesForScript(_ scriptId: UUID) -> [Schedule] {
         schedules.filter { $0.scriptId == scriptId }
     }

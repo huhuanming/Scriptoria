@@ -8,6 +8,8 @@ struct ScriptDetailView: View {
     @State private var showEditSheet = false
     @State private var runHistory: [ScriptRun] = []
     @State private var selectedRun: ScriptRun?
+    @State private var isAddingTag = false
+    @State private var newTagText = ""
     @Environment(\.colorScheme) var colorScheme
 
     var isRunning: Bool {
@@ -30,11 +32,15 @@ struct ScriptDetailView: View {
         .onChange(of: script.id) { _, _ in
             loadHistory()
             selectedRun = nil
+            Task { await appState.reloadSchedules() }
         }
         .onChange(of: appState.currentOutput) { _, _ in
             loadHistory()
         }
-        .onAppear { loadHistory() }
+        .onAppear {
+            loadHistory()
+            Task { await appState.reloadSchedules() }
+        }
         .toolbar {
             ToolbarItemGroup(placement: .primaryAction) {
                 Button {
@@ -114,12 +120,43 @@ struct ScriptDetailView: View {
                 .disabled(isRunning)
             }
 
-            // Tags
-            if !script.tags.isEmpty {
-                HStack(spacing: 6) {
-                    ForEach(script.tags, id: \.self) { tag in
+            // Tags (editable)
+            FlowLayout(spacing: 6) {
+                ForEach(script.tags, id: \.self) { tag in
+                    HStack(spacing: 4) {
                         TagCapsule(tag: tag)
+                        Button {
+                            removeTag(tag)
+                        } label: {
+                            Image(systemName: "xmark")
+                                .font(.system(size: 8, weight: .bold))
+                                .foregroundStyle(Theme.tagColor(for: tag).opacity(0.6))
+                        }
+                        .buttonStyle(.plain)
                     }
+                }
+
+                if isAddingTag {
+                    TextField("tag", text: $newTagText)
+                        .textFieldStyle(.plain)
+                        .font(.caption)
+                        .frame(width: 80)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 3)
+                        .background(.quaternary.opacity(0.3), in: Capsule())
+                        .onSubmit { commitNewTag() }
+                        .onExitCommand { isAddingTag = false; newTagText = "" }
+                } else {
+                    Button {
+                        isAddingTag = true
+                    } label: {
+                        Image(systemName: "plus")
+                            .font(.system(size: 9, weight: .bold))
+                            .foregroundStyle(.secondary)
+                            .frame(width: 22, height: 22)
+                            .background(.quaternary.opacity(0.3), in: Circle())
+                    }
+                    .buttonStyle(.plain)
                 }
             }
         }
@@ -366,6 +403,26 @@ struct ScriptDetailView: View {
 
     private func loadHistory() {
         runHistory = appState.fetchRunHistory(scriptId: script.id)
+    }
+
+    private func removeTag(_ tag: String) {
+        var updated = script
+        updated.tags.removeAll { $0 == tag }
+        Task { await appState.updateScript(updated) }
+    }
+
+    private func commitNewTag() {
+        let tag = newTagText.trimmingCharacters(in: .whitespaces)
+        guard !tag.isEmpty, !script.tags.contains(tag) else {
+            isAddingTag = false
+            newTagText = ""
+            return
+        }
+        var updated = script
+        updated.tags.append(tag)
+        Task { await appState.updateScript(updated) }
+        isAddingTag = false
+        newTagText = ""
     }
 
     private func runStatusBadge(_ status: RunStatus) -> some View {

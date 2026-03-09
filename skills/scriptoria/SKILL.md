@@ -12,31 +12,53 @@ metadata:
 # Scriptoria — Automation Script Manager
 
 Manage, run, and schedule shell scripts on macOS via the `scriptoria` CLI.
-Scriptoria stores scripts in a local SQLite database and uses macOS launchd for scheduling.
 
-## Step 1: Check Environment
+## Quick Start: Creating a Task (Full Example)
 
-Run these checks before taking action:
+Here's how to create, register, test, and schedule a script — end to end:
 
 ```bash
-# 1. Is the CLI installed?
-which scriptoria
+# 1. Write the script
+cat > /tmp/disk-usage-alert.sh << 'SCRIPT'
+#!/bin/bash
+# Alert if disk usage exceeds 80%
+USAGE=$(df -h / | awk 'NR==2 {gsub(/%/,""); print $5}')
+echo "Disk usage: ${USAGE}%"
+if [ "$USAGE" -gt 80 ]; then
+  echo "⚠️  WARNING: Disk usage is above 80%!"
+  exit 1
+fi
+echo "Disk usage is normal."
+SCRIPT
+chmod +x /tmp/disk-usage-alert.sh
 
-# 2. Show current config (data directory, db path)
-scriptoria config show
+# 2. Add to Scriptoria
+scriptoria add /tmp/disk-usage-alert.sh \
+  --title "Disk Usage Alert" \
+  --description "Check if root disk usage exceeds 80%" \
+  --interpreter bash \
+  --tags "monitoring,disk"
 
-# 3. List existing scripts
+# 3. Test run
+scriptoria run "Disk Usage Alert"
+
+# 4. Schedule to run every 30 minutes
+scriptoria schedule add "Disk Usage Alert" --every 30
+
+# 5. Verify everything
 scriptoria list
+scriptoria schedule list
 ```
 
-- If `which scriptoria` fails → the CLI is not installed. See [Installation](#installation).
-- If `scriptoria config show` works → the CLI is ready to use.
+## Pre-flight Check
 
-## Installation
+Before taking action, verify the CLI is available:
 
-The CLI binary must be symlinked to `/usr/local/bin/scriptoria`.
+```bash
+which scriptoria && scriptoria config show
+```
 
-### From source (development)
+If `which scriptoria` fails, install the CLI:
 
 ```bash
 cd /path/to/Scriptoria
@@ -44,147 +66,78 @@ swift build
 sudo ln -sf "$(pwd)/.build/debug/scriptoria" /usr/local/bin/scriptoria
 ```
 
-### From the GUI app
-
-Open Scriptoria.app → Settings → General → Shell Command → click **Install**.
-
-## Step 2: Choose an Action
+## Commands Reference
 
 ### Add a script
 
-Register an existing script file with Scriptoria.
-
 ```bash
-# Basic — title is inferred from filename
-scriptoria add ./backup.sh
-
-# Full options
-scriptoria add ~/scripts/deploy.sh \
-  --title "Deploy Production" \
-  --description "Deploy app to production server" \
-  --interpreter bash \
-  --tags "deploy,prod,ci"
+scriptoria add <path> [options]
 ```
-
-**Options:**
 
 | Flag | Short | Description |
 |------|-------|-------------|
-| `--title` | `-t` | Display name (defaults to filename without extension) |
+| `--title` | `-t` | Display name (defaults to filename) |
 | `--description` | `-d` | Description text |
 | `--interpreter` | `-i` | `auto`, `bash`, `zsh`, `sh`, `node`, `python3`, `ruby`, `osascript`, `binary` |
 | `--tags` | | Comma-separated tags |
-
-The script file must exist at the given path. Relative paths are resolved from the current directory.
+| `--skill` | | Path to a skill file for AI agents |
 
 ### Run a script
 
 ```bash
-# By title
-scriptoria run "Deploy Production"
-
-# By UUID (full or prefix from `scriptoria list`)
-scriptoria run 3A1F2B4C-XXXX-XXXX-XXXX-XXXXXXXXXXXX
-
-# With macOS notification on completion
-scriptoria run "Backup" --notify
+scriptoria run "Title"              # By title
+scriptoria run 3A1F2B4C             # By UUID prefix
+scriptoria run "Title" --notify     # Send macOS notification on finish
 ```
 
-Exit code matches the script's exit code. Run history (stdout, stderr, duration, status) is saved to the database.
-
-### List scripts
+### List / Search / Remove
 
 ```bash
-scriptoria list                 # All scripts
-scriptoria list --tag backup    # Filter by tag
-scriptoria list --favorites     # Favorites only
-scriptoria list --recent        # Recently run
+scriptoria list                     # All scripts
+scriptoria list --tag monitoring    # Filter by tag
+scriptoria list --favorites         # Favorites only
+scriptoria list --recent            # Recently run
+
+scriptoria search "backup"          # Search title, description, tags
+scriptoria tags                     # List all tags with counts
+
+scriptoria remove "Title"           # Remove by title or UUID
 ```
 
-### Search scripts
+### Schedule
 
 ```bash
-scriptoria search "backup"     # Matches title, description, tags
+# Add schedules (3 types)
+scriptoria schedule add "Title" --every 10              # Every 10 minutes
+scriptoria schedule add "Title" --daily 09:00            # Daily at 09:00
+scriptoria schedule add "Title" --weekly "mon,fri@09:00" # Weekly
+
+# Manage schedules
+scriptoria schedule list
+scriptoria schedule enable <id>
+scriptoria schedule disable <id>
+scriptoria schedule remove <id>
 ```
 
-### Remove a script
+Weekly day names: `sun`, `mon`, `tue`, `wed`, `thu`, `fri`, `sat`
+
+### Config
 
 ```bash
-scriptoria remove "Deploy Production"   # By title
-scriptoria remove 3A1F2B4C              # By UUID or prefix
+scriptoria config show              # Show current config
+scriptoria config set-dir ~/data    # Change data directory
 ```
 
-This removes the script from Scriptoria's database only. The script file on disk is not deleted.
+## Agent Workflow Tips
 
-### List tags
-
-```bash
-scriptoria tags                # Shows all tags with script counts
-```
-
-## Step 3: Schedule a Script
-
-Scriptoria uses macOS launchd agents for persistent scheduling that survives reboots.
-
-### Add a schedule
-
-Three schedule types are available:
-
-```bash
-# Interval — run every N minutes
-scriptoria schedule add "Health Check" --every 10
-
-# Daily — run at a specific time
-scriptoria schedule add "Daily Report" --daily 09:00
-
-# Weekly — run on specific days at a time
-scriptoria schedule add "Weekly Backup" --weekly "mon,wed,fri@09:00"
-```
-
-**Weekly day names:** `sun`, `mon`, `tue`, `wed`, `thu`, `fri`, `sat`
-
-### List schedules
-
-```bash
-scriptoria schedule list       # Shows all schedules, status, next run time
-```
-
-### Enable / Disable / Remove
-
-```bash
-# Use schedule ID prefix from `scriptoria schedule list`
-scriptoria schedule enable 3A1F2B4C
-scriptoria schedule disable 3A1F2B4C
-scriptoria schedule remove 3A1F2B4C
-```
-
-## Step 4: Configure
-
-```bash
-# Show current configuration
-scriptoria config show
-
-# Change data directory
-scriptoria config set-dir ~/my-scriptoria-data
-
-# Use iCloud Drive (syncs across Macs)
-scriptoria config use-icloud
-```
-
-Data is stored at `~/.scriptoria/` by default:
-- `db/scriptoria.db` — SQLite database (scripts, run history, schedules)
-- `scripts/` — Optional script storage
-
-## Agent-Specific Notes
-
-### Claude Code / terminal-based agents
-
-- All commands work directly via `bash`. No interactive prompts.
-- After `scriptoria add`, the returned UUID can be used for subsequent `run` / `schedule` commands.
+- After `scriptoria add`, the printed UUID can be used for `run` / `schedule` commands.
+- All commands are non-interactive — safe for automation.
+- Exit code of `scriptoria run` matches the script's exit code.
+- Run history (stdout, stderr, exit code) is saved to the database.
 - Chain commands for a complete workflow:
 
 ```bash
-# Write → Add → Test → Schedule in one flow
+# Write → Add → Test → Schedule
 cat > /tmp/check.sh << 'SCRIPT'
 #!/bin/bash
 curl -sf https://example.com/health && echo "OK" || exit 1
@@ -195,41 +148,8 @@ scriptoria run "Health Check"
 scriptoria schedule add "Health Check" --every 15
 ```
 
-### Sandboxed environments
-
-If the agent cannot execute shell commands directly, instruct the user to:
-1. Open Scriptoria.app
-2. Use the GUI to add scripts, run them, and configure schedules
-
-## Output
-
-On success, all commands print a confirmation with relevant details (script ID, schedule ID, next run time). On failure, commands exit with code 1 and print an error message prefixed with `❌`.
-
 ## Troubleshooting
 
-### CLI not found
-
-```bash
-# Check if binary exists
-ls -la /usr/local/bin/scriptoria
-
-# If broken symlink, rebuild and re-link
-swift build && sudo ln -sf "$(pwd)/.build/debug/scriptoria" /usr/local/bin/scriptoria
-```
-
-### Script not found
-
-- Verify the script title matches exactly (case-sensitive): `scriptoria search "<keyword>"`
-- Use UUID instead of title: `scriptoria list` → copy the 8-char ID prefix
-
-### Schedule not activating
-
-```bash
-# Check launchd status
-scriptoria schedule list
-# Look for "launchd: installed" vs "not installed"
-
-# Re-enable if needed
-scriptoria schedule disable <id>
-scriptoria schedule enable <id>
-```
+- **CLI not found**: Rebuild and re-link: `swift build && sudo ln -sf "$(pwd)/.build/debug/scriptoria" /usr/local/bin/scriptoria`
+- **Script not found**: Use `scriptoria search "<keyword>"` to check the exact title, or use UUID from `scriptoria list`
+- **Schedule not activating**: Run `scriptoria schedule list` to check status, then `scriptoria schedule disable <id>` + `scriptoria schedule enable <id>` to reset

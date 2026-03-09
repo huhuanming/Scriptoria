@@ -34,12 +34,6 @@ public struct Config: Codable, Sendable {
         return "\(home)/.scriptoria"
     }
 
-    /// iCloud Drive .scriptoria path
-    public static var iCloudDataDirectory: String {
-        let home = FileManager.default.homeDirectoryForCurrentUser.path
-        return "\(home)/Library/Mobile Documents/com~apple~CloudDocs/.scriptoria"
-    }
-
     /// Scripts subdirectory within the data directory
     public var scriptsDirectory: String {
         "\(dataDirectory)/scripts"
@@ -62,13 +56,25 @@ public struct Config: Codable, Sendable {
         var dataDirectory: String
     }
 
-    /// Resolve the actual data directory by reading the pointer file
+    /// Resolve the actual data directory by reading the pointer file.
+    /// Falls back to the default directory if the pointer target is inaccessible.
     public static func resolveDataDirectory() -> String {
         let pointerPath = pointerFilePath
         if FileManager.default.fileExists(atPath: pointerPath),
            let data = try? Data(contentsOf: URL(fileURLWithPath: pointerPath)),
            let pointer = try? JSONDecoder().decode(Pointer.self, from: data) {
-            return pointer.dataDirectory
+            // Verify the directory is accessible
+            if FileManager.default.isWritableFile(atPath: pointer.dataDirectory) {
+                return pointer.dataDirectory
+            }
+            // Try to create it — if it fails, the directory is inaccessible
+            if (try? FileManager.default.createDirectory(
+                atPath: pointer.dataDirectory, withIntermediateDirectories: true)) != nil,
+               FileManager.default.isWritableFile(atPath: pointer.dataDirectory) {
+                return pointer.dataDirectory
+            }
+            // Fall back to default
+            return defaultDataDirectory
         }
         return defaultDataDirectory
     }

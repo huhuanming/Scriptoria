@@ -12,7 +12,6 @@ struct OnboardingView: View {
 
     enum StorageOption: String, CaseIterable {
         case local = "Local"
-        case icloud = "iCloud"
         case custom = "Custom"
     }
 
@@ -49,7 +48,6 @@ struct OnboardingView: View {
 
                 VStack(spacing: 8) {
                     optionRow(.local, icon: "internaldrive", title: "Local", subtitle: Config.defaultDataDirectory)
-                    optionRow(.icloud, icon: "icloud", title: "iCloud Drive", subtitle: Config.iCloudDataDirectory)
                     optionRow(.custom, icon: "folder.badge.gearshape", title: "Custom Location", subtitle: selectedOption == .custom ? selectedPath : "Choose a directory...")
                 }
             }
@@ -93,7 +91,7 @@ struct OnboardingView: View {
                 }
             } else {
                 selectedOption = option
-                selectedPath = option == .icloud ? Config.iCloudDataDirectory : Config.defaultDataDirectory
+                selectedPath = Config.defaultDataDirectory
             }
         } label: {
             HStack(spacing: 12) {

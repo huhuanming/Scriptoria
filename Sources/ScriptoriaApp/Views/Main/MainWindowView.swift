@@ -228,7 +228,7 @@ struct ScriptRowView: View {
                     .font(.caption.monospacedDigit())
                     .foregroundStyle(.tertiary)
                 if let lastRun = script.lastRunAt {
-                    Text(lastRun, style: .relative)
+                    Text(lastRun.formatted(.relative(presentation: .named)))
                         .font(.caption2)
                         .foregroundStyle(.quaternary)
                 }

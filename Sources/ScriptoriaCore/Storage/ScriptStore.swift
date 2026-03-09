@@ -9,7 +9,18 @@ public final class ScriptStore: @unchecked Sendable {
     /// Create a store using an explicit directory
     public init(baseDirectory: String? = nil) {
         let dir = baseDirectory ?? Config.resolveDataDirectory()
-        self.db = try! DatabaseManager(directory: dir)
+        do {
+            self.db = try DatabaseManager(directory: dir)
+        } catch {
+            // If the resolved directory is inaccessible (e.g. iCloud without permission),
+            // fall back to the default local directory
+            let fallback = Config.defaultDataDirectory
+            if dir != fallback {
+                self.db = try! DatabaseManager(directory: fallback)
+            } else {
+                fatalError("Cannot open Scriptoria database at \(dir): \(error)")
+            }
+        }
     }
 
     /// Create a store using the directory from Config

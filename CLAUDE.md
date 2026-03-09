@@ -7,7 +7,7 @@ Scriptoria is a macOS automation script manager — a menu bar app + CLI tool fo
 - **ScriptoriaApp** — SwiftUI macOS app (menu bar + main window)
 - **ScriptoriaCLI** — Command-line tool (`scriptoria`)
 - **ScriptoriaCore** — Shared library (models, storage, execution)
-- Storage: SQLite via GRDB at `~/.scriptoria/` (configurable, supports iCloud)
+- Storage: SQLite via GRDB at `~/.scriptoria/` (configurable)
 - Scheduling: macOS launchd agents
 
 ## Build & Run
@@ -129,7 +129,6 @@ scriptoria schedule remove <schedule-id>
 ```bash
 scriptoria config show                      # Show current config
 scriptoria config set-dir ~/my-data         # Set data directory
-scriptoria config use-icloud                # Store data in iCloud Drive
 ```
 
 ## Typical AI Workflow

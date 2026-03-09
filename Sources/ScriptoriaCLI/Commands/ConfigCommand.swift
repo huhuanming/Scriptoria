@@ -9,7 +9,6 @@ struct ConfigCommand: AsyncParsableCommand {
         subcommands: [
             ShowConfig.self,
             SetDataDir.self,
-            UseICloud.self,
         ],
         defaultSubcommand: ShowConfig.self
     )
@@ -67,26 +66,3 @@ struct SetDataDir: AsyncParsableCommand {
     }
 }
 
-struct UseICloud: AsyncParsableCommand {
-    static let configuration = CommandConfiguration(
-        commandName: "use-icloud",
-        abstract: "Store data in iCloud Drive"
-    )
-
-    func run() async throws {
-        let icloudPath = Config.iCloudDataDirectory
-
-        // Create directory if it doesn't exist
-        if !FileManager.default.fileExists(atPath: icloudPath) {
-            try FileManager.default.createDirectory(
-                atPath: icloudPath, withIntermediateDirectories: true
-            )
-        }
-
-        var config = Config.load()
-        config.dataDirectory = icloudPath
-        try config.save()
-
-        print("✅ Data directory set to iCloud: \(icloudPath)")
-    }
-}

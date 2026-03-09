@@ -130,13 +130,6 @@ struct SettingsView: View {
                         .disabled(dataDirectory == Config.defaultDataDirectory)
 
                         Button {
-                            setDataDirectory(Config.iCloudDataDirectory)
-                        } label: {
-                            Label("iCloud", systemImage: "icloud")
-                        }
-                        .disabled(dataDirectory == Config.iCloudDataDirectory)
-
-                        Button {
                             let panel = NSOpenPanel()
                             panel.canChooseFiles = false
                             panel.canChooseDirectories = true

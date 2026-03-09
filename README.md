@@ -13,7 +13,6 @@ Built with Swift, SwiftUI, SQLite ([GRDB](https://github.com/groue/GRDB.swift)),
 - **Run with live output** — Execute scripts and see stdout/stderr in real time
 - **Run history** — Full execution history with output, exit codes, and duration
 - **Schedule tasks** — Set up interval, daily, or weekly schedules backed by macOS launchd (persists across reboots)
-- **iCloud sync** — Optionally store data in iCloud Drive to sync across Macs
 - **Onboarding** — First-launch wizard to choose storage location
 - **CLI installer** — One-click install of the `scriptoria` command from Settings
 
@@ -44,7 +43,6 @@ scriptoria config show
 | `schedule enable/disable/remove` | Manage existing schedules |
 | `config show` | Show current configuration |
 | `config set-dir <path>` | Change data directory |
-| `config use-icloud` | Switch to iCloud Drive storage |
 
 ### AI Agent Friendly
 
