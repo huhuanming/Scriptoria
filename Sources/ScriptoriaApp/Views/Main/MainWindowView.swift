@@ -11,9 +11,10 @@ struct MainWindowView: View {
         NavigationSplitView(columnVisibility: $columnVisibility) {
             SidebarView()
         } content: {
-            if appState.selectedTag == "__schedules__" {
+            switch appState.selectedTag {
+            case "__schedules__":
                 AllSchedulesView()
-            } else {
+            default:
                 ScriptListView()
             }
         } detail: {
@@ -53,7 +54,7 @@ struct SidebarView: View {
     var body: some View {
         List(selection: $appState.selectedTag) {
             Section("Library") {
-                sidebarItem("All Scripts", icon: "square.grid.2x2", tag: nil, count: appState.scripts.count)
+                sidebarItem("All Scripts", icon: "square.grid.2x2", tag: "__all__", count: appState.scripts.count)
                 sidebarItem("Favorites", icon: "star.fill", tag: "__favorites__", count: appState.favoriteScripts.count, iconColor: .yellow)
                 sidebarItem("Recent", icon: "clock.arrow.counterclockwise", tag: "__recent__", count: appState.recentScripts.count)
             }
@@ -81,7 +82,7 @@ struct SidebarView: View {
                                 .foregroundStyle(Theme.tagColor(for: tag))
                                 .font(.caption)
                         }
-                        .tag(tag as String?)
+                        .tag(tag)
                     }
                 }
             }
@@ -90,7 +91,7 @@ struct SidebarView: View {
         .navigationTitle("Scriptoria")
     }
 
-    private func sidebarItem(_ title: String, icon: String, tag: String?, count: Int, iconColor: Color? = nil) -> some View {
+    private func sidebarItem(_ title: String, icon: String, tag: String, count: Int, iconColor: Color? = nil) -> some View {
         Label {
             HStack {
                 Text(title)
@@ -110,7 +111,7 @@ struct SidebarView: View {
             Image(systemName: icon)
                 .foregroundStyle(iconColor ?? .secondary)
         }
-        .tag(tag as String?)
+        .tag(tag)
     }
 }
 

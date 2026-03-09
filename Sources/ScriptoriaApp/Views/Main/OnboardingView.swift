@@ -141,6 +141,21 @@ struct OnboardingView: View {
         // Create example script
         await createExampleScript(in: selectedPath)
 
+        // If user chose a non-default directory, clean up any leftover data files in ~/.scriptoria/
+        // (pointer.json is kept since it lives there permanently)
+        if selectedPath != Config.defaultDataDirectory {
+            let defaultDir = Config.defaultDataDirectory
+            let fm = FileManager.default
+            // Clean up db/ and scripts/ subdirectories, plus any legacy root files
+            for dir in ["db", "scripts"] {
+                try? fm.removeItem(atPath: "\(defaultDir)/\(dir)")
+            }
+            let legacyFiles = ["scriptoria.db", "scriptoria.db-wal", "scriptoria.db-shm"]
+            for file in legacyFiles {
+                try? fm.removeItem(atPath: "\(defaultDir)/\(file)")
+            }
+        }
+
         // Reload app state
         appState.needsOnboarding = false
         await appState.reloadWithConfig(config)
@@ -151,11 +166,12 @@ struct OnboardingView: View {
     }
 
     private func createExampleScript(in directory: String) async {
+        let scriptsDir = "\(directory)/scripts"
         try? FileManager.default.createDirectory(
-            atPath: directory, withIntermediateDirectories: true
+            atPath: scriptsDir, withIntermediateDirectories: true
         )
 
-        let scriptPath = "\(directory)/hello-world.sh"
+        let scriptPath = "\(scriptsDir)/hello-world.sh"
         let scriptContent = """
         #!/bin/bash
         # Scriptoria Example Script

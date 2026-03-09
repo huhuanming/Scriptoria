@@ -25,12 +25,10 @@ struct ShowConfig: AsyncParsableCommand {
         let config = Config.load()
         print("\n  Scriptoria Configuration\n")
         print("  Data directory:    \(config.dataDirectory)")
-        print("  Config file:       \(config.configFilePath)")
+        print("  Database:          \(config.dbDirectory)/scriptoria.db")
+        print("  Scripts:           \(config.scriptsDirectory)/")
         print("  Notify on finish:  \(config.notifyOnCompletion)")
         print("  Running indicator: \(config.showRunningIndicator)")
-        print()
-        print("  All data stored in: \(config.dataDirectory)/")
-        print("    config.json, scripts.json, schedules.json, history/")
         print()
     }
 }

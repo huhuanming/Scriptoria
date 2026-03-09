@@ -2,13 +2,14 @@ import Foundation
 
 /// Central store for managing scripts - used by both CLI and GUI
 public final class ScriptStore: @unchecked Sendable {
-    private let storage: StorageManager
+    private let db: DatabaseManager
     private var scripts: [Script] = []
     private let lock = NSLock()
 
     /// Create a store using an explicit directory
     public init(baseDirectory: String? = nil) {
-        self.storage = StorageManager(baseDirectory: baseDirectory)
+        let dir = baseDirectory ?? Config.resolveDataDirectory()
+        self.db = try! DatabaseManager(directory: dir)
     }
 
     /// Create a store using the directory from Config
@@ -16,79 +17,66 @@ public final class ScriptStore: @unchecked Sendable {
         self.init(baseDirectory: config.dataDirectory)
     }
 
-    /// Create a store using the saved config (reads ~/.scriptoria/config.json)
+    /// Create a store using the saved config
     public static func fromConfig() -> ScriptStore {
         ScriptStore(config: Config.load())
     }
 
     // MARK: - Lifecycle
 
-    /// Load scripts from disk
+    /// Load scripts from database (and migrate JSON if needed)
     public func load() async throws {
-        try await storage.ensureDirectories()
-        let path = await storage.scriptsFile
-        do {
-            let loaded: [Script] = try await storage.read([Script].self, from: path)
-            lock.withLock { scripts = loaded }
-        } catch {
-            // File doesn't exist yet, start with empty
-            lock.withLock { scripts = [] }
-        }
+        // databasePath is {dataDir}/db/scriptoria.db — go up two levels to get dataDir
+        let dataDir = URL(fileURLWithPath: db.databasePath).deletingLastPathComponent().deletingLastPathComponent().path
+        try db.migrateFromJSONIfNeeded(directory: dataDir)
+        let loaded = try db.fetchAllScripts()
+        lock.withLock { scripts = loaded }
     }
 
-    /// Save scripts to disk
+    /// Save is now a no-op since each mutation writes directly to SQLite
     public func save() async throws {
-        let current = lock.withLock { scripts }
-        let path = await storage.scriptsFile
-        try await storage.write(current, to: path)
+        // No-op: writes happen immediately in each mutation method
     }
 
     // MARK: - CRUD
 
-    /// Get all scripts
     public func all() -> [Script] {
         lock.withLock { scripts }
     }
 
-    /// Get a script by ID
     public func get(id: UUID) -> Script? {
         lock.withLock { scripts.first { $0.id == id } }
     }
 
-    /// Get a script by title (case-insensitive)
     public func get(title: String) -> Script? {
         let lower = title.lowercased()
         return lock.withLock { scripts.first { $0.title.lowercased() == lower } }
     }
 
-    /// Add a new script
     @discardableResult
     public func add(_ script: Script) async throws -> Script {
+        try db.insertScript(script)
         lock.withLock { scripts.append(script) }
-        try await save()
         return script
     }
 
-    /// Update an existing script
     public func update(_ script: Script) async throws {
+        try db.updateScript(script)
         lock.withLock {
             if let index = scripts.firstIndex(where: { $0.id == script.id }) {
                 scripts[index] = script
                 scripts[index].updatedAt = Date()
             }
         }
-        try await save()
     }
 
-    /// Remove a script by ID
     public func remove(id: UUID) async throws {
+        try db.deleteScript(id: id)
         lock.withLock { scripts.removeAll { $0.id == id } }
-        try await save()
     }
 
     // MARK: - Search & Filter
 
-    /// Search scripts by query string (matches title, description, tags)
     public func search(query: String) -> [Script] {
         let lower = query.lowercased()
         return lock.withLock {
@@ -100,7 +88,6 @@ public final class ScriptStore: @unchecked Sendable {
         }
     }
 
-    /// Filter scripts by tag
     public func filter(tag: String) -> [Script] {
         let lower = tag.lowercased()
         return lock.withLock {
@@ -108,12 +95,10 @@ public final class ScriptStore: @unchecked Sendable {
         }
     }
 
-    /// Get favorite scripts
     public func favorites() -> [Script] {
         lock.withLock { scripts.filter(\.isFavorite) }
     }
 
-    /// Get recently run scripts, sorted by last run date
     public func recentlyRun(limit: Int = 10) -> [Script] {
         lock.withLock {
             scripts
@@ -124,7 +109,6 @@ public final class ScriptStore: @unchecked Sendable {
         }
     }
 
-    /// Get all unique tags
     public func allTags() -> [String] {
         let tags = lock.withLock { scripts.flatMap(\.tags) }
         return Array(Set(tags)).sorted()
@@ -132,8 +116,8 @@ public final class ScriptStore: @unchecked Sendable {
 
     // MARK: - Run Tracking
 
-    /// Record that a script was run
     public func recordRun(id: UUID, status: RunStatus) async throws {
+        try db.recordRun(scriptId: id, status: status)
         lock.withLock {
             if let index = scripts.firstIndex(where: { $0.id == id }) {
                 scripts[index].lastRunAt = Date()
@@ -141,11 +125,19 @@ public final class ScriptStore: @unchecked Sendable {
                 scripts[index].runCount += 1
             }
         }
-        try await save()
     }
 
-    /// Save a run record to history
     public func saveRunHistory(_ run: ScriptRun) async throws {
-        try await storage.appendHistory(run)
+        try db.insertScriptRun(run)
+    }
+
+    /// Fetch run history for a specific script
+    public func fetchRunHistory(scriptId: UUID, limit: Int = 50) throws -> [ScriptRun] {
+        try db.fetchRunHistory(scriptId: scriptId, limit: limit)
+    }
+
+    /// Fetch all run history
+    public func fetchAllRunHistory(limit: Int = 100) throws -> [ScriptRun] {
+        try db.fetchAllRunHistory(limit: limit)
     }
 }

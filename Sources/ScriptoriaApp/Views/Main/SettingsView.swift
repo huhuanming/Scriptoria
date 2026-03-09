@@ -7,6 +7,11 @@ struct SettingsView: View {
     @State private var dataDirectory: String = ""
     @State private var notifyOnCompletion: Bool = true
     @State private var showRunningIndicator: Bool = true
+    @State private var cliInstallStatus: CLIInstallStatus = .unknown
+
+    enum CLIInstallStatus: Equatable {
+        case unknown, installed, notInstalled, justInstalled, failed(String)
+    }
 
     var body: some View {
         TabView {
@@ -50,8 +55,47 @@ struct SettingsView: View {
                         appState.updateConfig(config)
                     }
             }
+
+            Section("Shell Command") {
+                HStack(spacing: 12) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Install 'scriptoria' command in PATH")
+                            .font(.callout)
+                        Text("Creates a symlink at /usr/local/bin/scriptoria")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    switch cliInstallStatus {
+                    case .installed:
+                        Label("Installed", systemImage: "checkmark.circle.fill")
+                            .font(.caption)
+                            .foregroundStyle(Theme.successColor)
+                    case .justInstalled:
+                        Label("Installed", systemImage: "checkmark.circle.fill")
+                            .font(.caption)
+                            .foregroundStyle(Theme.successColor)
+                    case .failed(let msg):
+                        Text(msg)
+                            .font(.caption)
+                            .foregroundStyle(Theme.failureColor)
+                    default:
+                        EmptyView()
+                    }
+                    if cliInstallStatus != .installed && cliInstallStatus != .justInstalled {
+                        Button("Install") {
+                            installCLI()
+                        }
+                    } else {
+                        Button("Uninstall") {
+                            uninstallCLI()
+                        }
+                    }
+                }
+            }
         }
         .formStyle(.grouped)
+        .onAppear { checkCLIInstalled() }
     }
 
     var storageTab: some View {
@@ -123,7 +167,7 @@ struct SettingsView: View {
                     Text("Stored in this directory:")
                         .font(.caption)
                         .foregroundStyle(.secondary)
-                    Text("config.json, scripts.json, schedules.json, history/")
+                    Text("db/scriptoria.db, scripts/")
                         .font(.system(.caption2, design: .monospaced))
                         .foregroundStyle(.tertiary)
                 }
@@ -161,8 +205,102 @@ struct SettingsView: View {
         .frame(maxWidth: .infinity)
     }
 
+    // MARK: - CLI Install
+
+    private static let symlinkPath = "/usr/local/bin/scriptoria"
+
+    private func checkCLIInstalled() {
+        let fm = FileManager.default
+        let path = Self.symlinkPath
+        if fm.fileExists(atPath: path) {
+            // Verify it's a valid symlink (not a broken one)
+            if let _ = try? fm.destinationOfSymbolicLink(atPath: path) {
+                cliInstallStatus = .installed
+            } else {
+                cliInstallStatus = .installed
+            }
+        } else {
+            cliInstallStatus = .notInstalled
+        }
+    }
+
+    private func findCLIBinary() -> String? {
+        // 1. Inside app bundle (for .app distribution)
+        if let bundleURL = Bundle.main.executableURL?.deletingLastPathComponent() {
+            let bundled = bundleURL.appendingPathComponent("scriptoria").path
+            if FileManager.default.fileExists(atPath: bundled) {
+                return bundled
+            }
+        }
+        // 2. Swift build directory (development)
+        let devPath = Bundle.main.bundleURL
+            .deletingLastPathComponent()
+            .appendingPathComponent("scriptoria").path
+        if FileManager.default.fileExists(atPath: devPath) {
+            return devPath
+        }
+        // 3. Common build paths
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        let buildPaths = [
+            "\(home)/.swiftpm/bin/scriptoria",
+            "\(home)/.local/bin/scriptoria",
+        ]
+        for p in buildPaths {
+            if FileManager.default.fileExists(atPath: p) {
+                return p
+            }
+        }
+        return nil
+    }
+
+    private func installCLI() {
+        guard let cliPath = findCLIBinary() else {
+            cliInstallStatus = .failed("CLI binary not found")
+            return
+        }
+
+        let targetDir = "/usr/local/bin"
+        let symlink = Self.symlinkPath
+
+        // Use AppleScript to run with admin privileges
+        let script = """
+        do shell script "mkdir -p \(targetDir) && ln -sf \(cliPath) \(symlink)" with administrator privileges
+        """
+        var error: NSDictionary?
+        if let appleScript = NSAppleScript(source: script) {
+            appleScript.executeAndReturnError(&error)
+            if let error {
+                let msg = error[NSAppleScript.errorMessage] as? String ?? "Permission denied"
+                cliInstallStatus = .failed(msg)
+            } else {
+                cliInstallStatus = .justInstalled
+            }
+        }
+    }
+
+    private func uninstallCLI() {
+        let symlink = Self.symlinkPath
+        let script = """
+        do shell script "rm -f \(symlink)" with administrator privileges
+        """
+        var error: NSDictionary?
+        if let appleScript = NSAppleScript(source: script) {
+            appleScript.executeAndReturnError(&error)
+            if error == nil {
+                cliInstallStatus = .notInstalled
+            }
+        }
+    }
+
     private func setDataDirectory(_ path: String) {
+        let oldDir = appState.config.dataDirectory
         dataDirectory = path
+
+        // Migrate data from old directory to new one
+        if oldDir != path {
+            try? Config.migrateDataDirectory(from: oldDir, to: path)
+        }
+
         var config = appState.config
         config.dataDirectory = path
         appState.updateConfig(config)

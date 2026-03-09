@@ -8,10 +8,11 @@ final class AppState: ObservableObject {
     @Published var schedules: [Schedule] = []
     @Published var searchQuery: String = ""
     @Published var selectedScript: Script?
-    @Published var selectedTag: String?
+    @Published var selectedTag: String = "__all__"
     @Published var isRunning: Bool = false
     @Published var runningScriptIds: Set<UUID> = []
     @Published var currentOutput: String = ""
+    @Published var currentOutputScriptId: UUID?
     @Published var config: Config
     @Published var needsOnboarding: Bool
 
@@ -21,8 +22,9 @@ final class AppState: ObservableObject {
 
     var filteredScripts: [Script] {
         var result = scripts
-        if let tag = selectedTag {
-            result = result.filter { $0.tags.contains { $0.lowercased() == tag.lowercased() } }
+        // Filter by tag (skip special sidebar items)
+        if !selectedTag.hasPrefix("__") {
+            result = result.filter { $0.tags.contains { $0.lowercased() == selectedTag.lowercased() } }
         }
         if !searchQuery.isEmpty {
             let q = searchQuery.lowercased()
@@ -164,6 +166,7 @@ final class AppState: ObservableObject {
         runningScriptIds.insert(script.id)
         isRunning = true
         currentOutput = ""
+        currentOutputScriptId = script.id
 
         let result = try? await runner.run(script)
 
@@ -183,6 +186,10 @@ final class AppState: ObservableObject {
                 await NotificationManager.shared.notifyRunComplete(result)
             }
         }
+    }
+
+    func fetchRunHistory(scriptId: UUID) -> [ScriptRun] {
+        (try? store.fetchRunHistory(scriptId: scriptId)) ?? []
     }
 
     func updateConfig(_ newConfig: Config) {
