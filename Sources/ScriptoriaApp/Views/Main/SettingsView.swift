@@ -7,7 +7,6 @@ struct SettingsView: View {
     @State private var dataDirectory: String = ""
     @State private var notifyOnCompletion: Bool = true
     @State private var showRunningIndicator: Bool = true
-    @State private var showSaveConfirmation = false
 
     var body: some View {
         TabView {
@@ -26,7 +25,7 @@ struct SettingsView: View {
                     Label("About", systemImage: "info.circle")
                 }
         }
-        .frame(width: 500, height: 300)
+        .frame(width: 520, height: 320)
         .onAppear {
             dataDirectory = appState.config.dataDirectory
             notifyOnCompletion = appState.config.notifyOnCompletion
@@ -57,49 +56,76 @@ struct SettingsView: View {
 
     var storageTab: some View {
         Form {
-            Section {
-                LabeledContent("Data Directory") {
-                    VStack(alignment: .trailing, spacing: 8) {
+            Section("Data Directory") {
+                VStack(alignment: .leading, spacing: 10) {
+                    Text("All Scriptoria data is stored in this directory:")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+
+                    HStack(spacing: 6) {
+                        Image(systemName: "folder.fill")
+                            .font(.caption)
+                            .foregroundStyle(Theme.accent)
                         Text(dataDirectory)
                             .font(.system(.caption, design: .monospaced))
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(.primary)
                             .textSelection(.enabled)
                             .lineLimit(2)
+                            .truncationMode(.middle)
+                    }
+                    .padding(8)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(.quaternary.opacity(0.3), in: RoundedRectangle(cornerRadius: 6))
 
-                        HStack(spacing: 8) {
-                            Button("iCloud") {
-                                dataDirectory = Config.iCloudDataDirectory
-                                saveDataDirectory()
-                            }
-                            .help("Store in iCloud Drive for sync")
+                    HStack(spacing: 8) {
+                        Button {
+                            setDataDirectory(Config.defaultDataDirectory)
+                        } label: {
+                            Label("Local", systemImage: "internaldrive")
+                        }
+                        .disabled(dataDirectory == Config.defaultDataDirectory)
 
-                            Button("Local") {
-                                dataDirectory = Config.defaultDataDirectory
-                                saveDataDirectory()
-                            }
-                            .help("Store locally")
+                        Button {
+                            setDataDirectory(Config.iCloudDataDirectory)
+                        } label: {
+                            Label("iCloud", systemImage: "icloud")
+                        }
+                        .disabled(dataDirectory == Config.iCloudDataDirectory)
 
-                            Button("Custom...") {
-                                let panel = NSOpenPanel()
-                                panel.canChooseFiles = false
-                                panel.canChooseDirectories = true
-                                panel.canCreateDirectories = true
-                                if panel.runModal() == .OK, let url = panel.url {
-                                    dataDirectory = url.path
-                                    saveDataDirectory()
-                                }
+                        Button {
+                            let panel = NSOpenPanel()
+                            panel.canChooseFiles = false
+                            panel.canChooseDirectories = true
+                            panel.canCreateDirectories = true
+                            panel.prompt = "Select"
+                            panel.message = "Choose a directory for Scriptoria data"
+                            if panel.runModal() == .OK, let url = panel.url {
+                                setDataDirectory(url.path)
                             }
+                        } label: {
+                            Label("Custom...", systemImage: "folder.badge.gearshape")
+                        }
+
+                        Spacer()
+
+                        Button {
+                            NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: dataDirectory)
+                        } label: {
+                            Label("Reveal", systemImage: "arrow.right.circle")
                         }
                     }
+                    .font(.caption)
                 }
             }
 
             Section {
-                LabeledContent("Config File") {
-                    Text(Config.configFilePath)
-                        .font(.system(.caption, design: .monospaced))
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Stored in this directory:")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Text("config.json, scripts.json, schedules.json, history/")
+                        .font(.system(.caption2, design: .monospaced))
                         .foregroundStyle(.tertiary)
-                        .textSelection(.enabled)
                 }
             }
         }
@@ -135,13 +161,14 @@ struct SettingsView: View {
         .frame(maxWidth: .infinity)
     }
 
-    private func saveDataDirectory() {
-        try? FileManager.default.createDirectory(
-            atPath: dataDirectory,
-            withIntermediateDirectories: true
-        )
+    private func setDataDirectory(_ path: String) {
+        dataDirectory = path
         var config = appState.config
-        config.dataDirectory = dataDirectory
+        config.dataDirectory = path
         appState.updateConfig(config)
+        // Reload data from new location
+        Task {
+            await appState.reloadWithConfig(config)
+        }
     }
 }

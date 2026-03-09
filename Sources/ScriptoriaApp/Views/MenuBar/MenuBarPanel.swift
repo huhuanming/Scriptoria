@@ -6,6 +6,7 @@ struct MenuBarPanel: View {
     @EnvironmentObject var appState: AppState
     @State private var searchText = ""
     @Environment(\.openWindow) private var openWindow
+    @Environment(\.openSettings) private var openSettings
 
     var displayedScripts: [Script] {
         if searchText.isEmpty {
@@ -154,7 +155,7 @@ struct MenuBarPanel: View {
                 Spacer()
 
                 Button {
-                    NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
+                    openSettings()
                 } label: {
                     Image(systemName: "gear")
                         .font(.caption)
@@ -167,8 +168,16 @@ struct MenuBarPanel: View {
             .padding(.vertical, 8)
         }
         .frame(width: 330)
+        .sheet(isPresented: $appState.needsOnboarding) {
+            OnboardingView(isPresented: $appState.needsOnboarding)
+                .environmentObject(appState)
+        }
         .task {
-            await appState.loadScripts()
+            if appState.needsOnboarding {
+                // Will show onboarding sheet
+            } else {
+                await appState.loadScripts()
+            }
         }
     }
 }

@@ -13,9 +13,10 @@ final class AppState: ObservableObject {
     @Published var runningScriptIds: Set<UUID> = []
     @Published var currentOutput: String = ""
     @Published var config: Config
+    @Published var needsOnboarding: Bool
 
-    private let store: ScriptStore
-    private let scheduleStore: ScheduleStore
+    private var store: ScriptStore
+    private var scheduleStore: ScheduleStore
     private let runner = ScriptRunner()
 
     var filteredScripts: [Script] {
@@ -55,6 +56,9 @@ final class AppState: ObservableObject {
         self.config = loadedConfig
         self.store = ScriptStore(config: loadedConfig)
         self.scheduleStore = ScheduleStore(config: loadedConfig)
+        // First launch: no pointer file exists yet
+        let pointerPath = FileManager.default.homeDirectoryForCurrentUser.path + "/.scriptoria/pointer.json"
+        self.needsOnboarding = !FileManager.default.fileExists(atPath: pointerPath)
     }
 
     func loadScripts() async {
@@ -92,6 +96,20 @@ final class AppState: ObservableObject {
             schedules = scheduleStore.all()
         } catch {
             print("Failed to remove schedule: \(error)")
+        }
+    }
+
+    func updateSchedule(_ schedule: Schedule, newType: ScheduleType) async {
+        do {
+            // Deactivate old, update type, reactivate
+            try await scheduleStore.deactivate(schedule)
+            var updated = schedule
+            updated.type = newType
+            try await scheduleStore.update(updated)
+            try await scheduleStore.activate(updated)
+            schedules = scheduleStore.all()
+        } catch {
+            print("Failed to update schedule: \(error)")
         }
     }
 
@@ -170,5 +188,13 @@ final class AppState: ObservableObject {
     func updateConfig(_ newConfig: Config) {
         config = newConfig
         try? newConfig.save()
+    }
+
+    /// Reload stores after data directory change
+    func reloadWithConfig(_ newConfig: Config) async {
+        config = newConfig
+        store = ScriptStore(config: newConfig)
+        scheduleStore = ScheduleStore(config: newConfig)
+        await loadScripts()
     }
 }
