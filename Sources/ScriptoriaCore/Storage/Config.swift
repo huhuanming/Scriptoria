@@ -28,8 +28,26 @@ public struct Config: Codable, Sendable {
 
     // MARK: - Paths
 
+    private static func expandedPath(_ path: String) -> String {
+        let trimmed = path.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return trimmed }
+        if trimmed.hasPrefix("~") {
+            return NSString(string: trimmed).expandingTildeInPath
+        }
+        if trimmed.hasPrefix("/") {
+            return trimmed
+        }
+        return FileManager.default.currentDirectoryPath + "/" + trimmed
+    }
+
     /// Default data directory
     public static var defaultDataDirectory: String {
+        if let override = ProcessInfo.processInfo.environment["SCRIPTORIA_DEFAULT_DATA_DIR"] {
+            let expanded = expandedPath(override)
+            if !expanded.isEmpty {
+                return expanded
+            }
+        }
         let home = FileManager.default.homeDirectoryForCurrentUser.path
         return "\(home)/.scriptoria"
     }
@@ -49,10 +67,20 @@ public struct Config: Codable, Sendable {
         "\(dataDirectory)/logs"
     }
 
+    /// Memory subdirectory within the data directory
+    public var memoryDirectory: String {
+        "\(dataDirectory)/memory"
+    }
+
     /// Pointer file: a tiny file at the default location that tells us where the real data directory is.
     private static var pointerFilePath: String {
-        let home = FileManager.default.homeDirectoryForCurrentUser.path
-        return "\(home)/.scriptoria/pointer.json"
+        if let override = ProcessInfo.processInfo.environment["SCRIPTORIA_POINTER_FILE"] {
+            let expanded = expandedPath(override)
+            if !expanded.isEmpty {
+                return expanded
+            }
+        }
+        return "\(defaultDataDirectory)/pointer.json"
     }
 
     // MARK: - Pointer (tells us where data lives)
@@ -64,6 +92,16 @@ public struct Config: Codable, Sendable {
     /// Resolve the actual data directory by reading the pointer file.
     /// Falls back to the default directory if the pointer target is inaccessible.
     public static func resolveDataDirectory() -> String {
+        if let override = ProcessInfo.processInfo.environment["SCRIPTORIA_DATA_DIR"] {
+            let expanded = expandedPath(override)
+            if !expanded.isEmpty {
+                if !FileManager.default.fileExists(atPath: expanded) {
+                    try? FileManager.default.createDirectory(atPath: expanded, withIntermediateDirectories: true)
+                }
+                return expanded
+            }
+        }
+
         let pointerPath = pointerFilePath
         if FileManager.default.fileExists(atPath: pointerPath),
            let data = try? Data(contentsOf: URL(fileURLWithPath: pointerPath)),
@@ -256,6 +294,8 @@ public struct Config: Codable, Sendable {
         try db.setConfig(key: "dataDirectory", value: dataDirectory)
 
         // Update pointer so CLI/App can find us
-        try Config.savePointer(dataDirectory: dataDirectory)
+        if ProcessInfo.processInfo.environment["SCRIPTORIA_DATA_DIR"] == nil {
+            try Config.savePointer(dataDirectory: dataDirectory)
+        }
     }
 }

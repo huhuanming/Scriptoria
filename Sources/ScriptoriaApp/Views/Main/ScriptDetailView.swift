@@ -6,15 +6,23 @@ struct ScriptDetailView: View {
     let script: Script
     @EnvironmentObject var appState: AppState
     @State private var showEditSheet = false
+    @State private var showRunSheet = false
+    @State private var runModelOverride = ""
     @State private var runHistory: [ScriptRun] = []
     @State private var selectedRun: ScriptRun?
     @State private var isAddingTag = false
     @State private var newTagText = ""
+    @State private var steerInput = ""
     @State private var averageDuration: TimeInterval?
+    @State private var isSummarizingMemory = false
     @Environment(\.colorScheme) var colorScheme
 
     var isRunning: Bool {
-        appState.runningScriptIds.contains(script.id)
+        appState.runningScriptIds.contains(script.id) || appState.runningAgentScriptIds.contains(script.id)
+    }
+
+    var isAgentRunning: Bool {
+        appState.runningAgentScriptIds.contains(script.id)
     }
 
     var body: some View {
@@ -33,6 +41,7 @@ struct ScriptDetailView: View {
         .onChange(of: script.id) { _, _ in
             loadHistory()
             selectedRun = nil
+            runModelOverride = script.defaultModel
             Task { await appState.reloadSchedules() }
         }
         .onChange(of: appState.currentOutput) { _, _ in
@@ -40,6 +49,7 @@ struct ScriptDetailView: View {
         }
         .onAppear {
             loadHistory()
+            runModelOverride = script.defaultModel
             Task { await appState.reloadSchedules() }
         }
         .toolbar {
@@ -68,7 +78,8 @@ struct ScriptDetailView: View {
                     .help("Stop script")
                 } else {
                     Button {
-                        Task { await appState.runScript(script) }
+                        runModelOverride = script.defaultModel
+                        showRunSheet = true
                     } label: {
                         Image(systemName: "play.fill")
                             .contentTransition(.symbolEffect(.replace))
@@ -80,6 +91,18 @@ struct ScriptDetailView: View {
         .sheet(isPresented: $showEditSheet) {
             EditScriptSheet(script: script, isPresented: $showEditSheet)
                 .environmentObject(appState)
+        }
+        .sheet(isPresented: $showRunSheet) {
+            RunWithModelSheet(
+                scriptTitle: script.title,
+                defaultModel: script.defaultModel,
+                modelOverride: $runModelOverride,
+                isPresented: $showRunSheet
+            ) { model in
+                Task {
+                    await appState.runScript(script, modelOverride: model)
+                }
+            }
         }
     }
 
@@ -125,7 +148,8 @@ struct ScriptDetailView: View {
                     .buttonStyle(RunButtonStyle(isRunning: isRunning))
                 } else {
                     Button {
-                        Task { await appState.runScript(script) }
+                        runModelOverride = script.defaultModel
+                        showRunSheet = true
                     } label: {
                         HStack(spacing: 6) {
                             Image(systemName: "play.fill")
@@ -268,6 +292,47 @@ struct ScriptDetailView: View {
                 .padding(.horizontal, 20)
                 .padding(.bottom, 16)
             }
+
+            HStack(spacing: 8) {
+                Image(systemName: "target")
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+                if let taskId = script.agentTaskId {
+                    Text("[\(taskId)] \(script.agentTaskName)")
+                        .font(.system(.caption, design: .monospaced))
+                        .foregroundStyle(.secondary)
+                } else {
+                    Text(script.agentTaskName)
+                        .font(.system(.caption, design: .monospaced))
+                        .foregroundStyle(.secondary)
+                }
+                if !script.defaultModel.isEmpty {
+                    Text("· \(script.defaultModel)")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                }
+                Spacer()
+                Button {
+                    isSummarizingMemory = true
+                    Task {
+                        let _ = await appState.summarizeWorkspaceMemory(for: script)
+                        isSummarizingMemory = false
+                    }
+                } label: {
+                    if isSummarizingMemory {
+                        ProgressView()
+                            .scaleEffect(0.7)
+                    } else {
+                        Label("Summarize Workspace", systemImage: "doc.text.magnifyingglass")
+                            .font(.caption)
+                    }
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.secondary)
+                .help("Summarize task memories into workspace memory")
+            }
+            .padding(.horizontal, 20)
+            .padding(.bottom, 16)
         }
     }
 
@@ -300,6 +365,22 @@ struct ScriptDetailView: View {
                     }
                     .padding(.horizontal, 20)
                     .padding(.top, 16)
+
+                    if isAgentRunning {
+                        HStack(spacing: 8) {
+                            TextField("Guide the running agent...", text: $steerInput)
+                                .textFieldStyle(.roundedBorder)
+                                .onSubmit { sendSteer() }
+                            Button("Send") {
+                                sendSteer()
+                            }
+                            .disabled(steerInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                            Button("Interrupt") {
+                                appState.stopScript(script.id)
+                            }
+                        }
+                        .padding(.horizontal, 20)
+                    }
 
                     ScrollViewReader { proxy in
                         ScrollView(.horizontal, showsIndicators: false) {
@@ -441,6 +522,15 @@ struct ScriptDetailView: View {
         Task { await appState.updateScript(updated) }
     }
 
+    private func sendSteer() {
+        let text = steerInput.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return }
+        Task {
+            await appState.steerAgent(scriptId: script.id, input: text)
+        }
+        steerInput = ""
+    }
+
     private func commitNewTag() {
         let tag = newTagText.trimmingCharacters(in: .whitespaces)
         guard !tag.isEmpty, !script.tags.contains(tag) else {
@@ -515,6 +605,48 @@ struct ScriptDetailView: View {
         case .cancelled: return Theme.warningColor
         case nil: return .secondary
         }
+    }
+}
+
+struct RunWithModelSheet: View {
+    let scriptTitle: String
+    let defaultModel: String
+    @Binding var modelOverride: String
+    @Binding var isPresented: Bool
+    let onRun: (String?) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text("Run Script")
+                .font(.headline)
+            Text(scriptTitle)
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+
+            TextField("Model (leave blank to use default)", text: $modelOverride)
+                .textFieldStyle(.roundedBorder)
+
+            if !defaultModel.isEmpty {
+                Text("Default: \(defaultModel)")
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+            }
+
+            HStack {
+                Spacer()
+                Button("Cancel") {
+                    isPresented = false
+                }
+                Button("Run") {
+                    let value = modelOverride.trimmingCharacters(in: .whitespacesAndNewlines)
+                    onRun(value.isEmpty ? nil : value)
+                    isPresented = false
+                }
+                .keyboardShortcut(.defaultAction)
+            }
+        }
+        .padding(20)
+        .frame(width: 420)
     }
 }
 

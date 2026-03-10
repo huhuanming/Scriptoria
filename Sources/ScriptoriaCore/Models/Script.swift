@@ -7,6 +7,9 @@ public struct Script: Codable, Identifiable, Sendable {
     public var description: String
     public var path: String
     public var skill: String
+    public var agentTaskId: Int?
+    public var agentTaskName: String
+    public var defaultModel: String
     public var interpreter: Interpreter
     public var tags: [String]
     public var isFavorite: Bool
@@ -22,6 +25,9 @@ public struct Script: Codable, Identifiable, Sendable {
         description: String = "",
         path: String,
         skill: String = "",
+        agentTaskId: Int? = nil,
+        agentTaskName: String = "",
+        defaultModel: String = "",
         interpreter: Interpreter = .auto,
         tags: [String] = [],
         isFavorite: Bool = false,
@@ -36,6 +42,9 @@ public struct Script: Codable, Identifiable, Sendable {
         self.description = description
         self.path = path
         self.skill = skill
+        self.agentTaskId = agentTaskId
+        self.agentTaskName = agentTaskName
+        self.defaultModel = defaultModel
         self.interpreter = interpreter
         self.tags = tags
         self.isFavorite = isFavorite

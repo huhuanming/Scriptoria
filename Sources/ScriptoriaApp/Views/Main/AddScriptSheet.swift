@@ -10,6 +10,8 @@ struct AddScriptSheet: View {
     @State private var description = ""
     @State private var path = ""
     @State private var skill = ""
+    @State private var taskName = ""
+    @State private var defaultModel = ""
     @State private var interpreter: Interpreter = .auto
     @State private var tagsInput = ""
     @State private var isFavorite = false
@@ -42,6 +44,9 @@ struct AddScriptSheet: View {
                             path = url.path
                             if title.isEmpty {
                                 title = url.deletingPathExtension().lastPathComponent
+                                if taskName.isEmpty {
+                                    taskName = title
+                                }
                             }
                         }
                     }
@@ -58,6 +63,9 @@ struct AddScriptSheet: View {
                         }
                     }
                 }
+
+                TextField("Task Name (for memory namespace)", text: $taskName)
+                TextField("Default Model (optional)", text: $defaultModel)
 
                 Picker("Interpreter", selection: $interpreter) {
                     ForEach(Interpreter.allCases, id: \.self) { interp in
@@ -102,6 +110,8 @@ struct AddScriptSheet: View {
                             description: description,
                             path: resolvedPath,
                             skill: resolvedSkill,
+                            agentTaskName: taskName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? title : taskName.trimmingCharacters(in: .whitespacesAndNewlines),
+                            defaultModel: defaultModel.trimmingCharacters(in: .whitespacesAndNewlines),
                             interpreter: interpreter,
                             tags: tags,
                             isFavorite: isFavorite
@@ -129,6 +139,8 @@ struct EditScriptSheet: View {
     @State private var description: String
     @State private var path: String
     @State private var skill: String
+    @State private var taskName: String
+    @State private var defaultModel: String
     @State private var interpreter: Interpreter
     @State private var tagsInput: String
     @State private var isFavorite: Bool
@@ -140,6 +152,8 @@ struct EditScriptSheet: View {
         self._description = State(initialValue: script.description)
         self._path = State(initialValue: script.path)
         self._skill = State(initialValue: script.skill)
+        self._taskName = State(initialValue: script.agentTaskName)
+        self._defaultModel = State(initialValue: script.defaultModel)
         self._interpreter = State(initialValue: script.interpreter)
         self._tagsInput = State(initialValue: script.tags.joined(separator: ", "))
         self._isFavorite = State(initialValue: script.isFavorite)
@@ -186,6 +200,9 @@ struct EditScriptSheet: View {
                     }
                 }
 
+                TextField("Task Name (for memory namespace)", text: $taskName)
+                TextField("Default Model (optional)", text: $defaultModel)
+
                 Picker("Interpreter", selection: $interpreter) {
                     ForEach(Interpreter.allCases, id: \.self) { interp in
                         Text(interp.rawValue).tag(interp)
@@ -220,6 +237,8 @@ struct EditScriptSheet: View {
                         updated.description = description
                         updated.path = path
                         updated.skill = resolvedSkill
+                        updated.agentTaskName = taskName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? title : taskName.trimmingCharacters(in: .whitespacesAndNewlines)
+                        updated.defaultModel = defaultModel.trimmingCharacters(in: .whitespacesAndNewlines)
                         updated.interpreter = interpreter
                         updated.tags = tags
                         updated.isFavorite = isFavorite

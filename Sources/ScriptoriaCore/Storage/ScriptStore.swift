@@ -67,15 +67,17 @@ public final class ScriptStore: @unchecked Sendable {
     @discardableResult
     public func add(_ script: Script) async throws -> Script {
         try db.insertScript(script)
-        lock.withLock { scripts.append(script) }
-        return script
+        let inserted = try db.fetchScript(id: script.id) ?? script
+        lock.withLock { scripts.append(inserted) }
+        return inserted
     }
 
     public func update(_ script: Script) async throws {
         try db.updateScript(script)
+        let refreshed = try db.fetchScript(id: script.id) ?? script
         lock.withLock {
             if let index = scripts.firstIndex(where: { $0.id == script.id }) {
-                scripts[index] = script
+                scripts[index] = refreshed
                 scripts[index].updatedAt = Date()
             }
         }
@@ -184,5 +186,56 @@ public final class ScriptStore: @unchecked Sendable {
     /// Fetch average durations for all scripts
     public func fetchAllAverageDurations() throws -> [UUID: TimeInterval] {
         try db.fetchAllAverageDurations()
+    }
+
+    // MARK: - Agent Profiles
+
+    public func upsertAgentProfile(
+        scriptId: UUID,
+        taskName: String,
+        defaultModel: String
+    ) async throws {
+        try db.upsertScriptAgentProfile(
+            scriptId: scriptId,
+            taskName: taskName,
+            defaultModel: defaultModel
+        )
+        if let refreshed = try db.fetchScript(id: scriptId) {
+            lock.withLock {
+                if let index = scripts.firstIndex(where: { $0.id == scriptId }) {
+                    scripts[index] = refreshed
+                }
+            }
+        }
+    }
+
+    public func fetchAgentProfile(scriptId: UUID) throws -> ScriptAgentProfile? {
+        try db.fetchScriptAgentProfile(scriptId: scriptId)
+    }
+
+    public func fetchAgentProfile(taskId: Int) throws -> ScriptAgentProfile? {
+        try db.fetchScriptAgentProfile(taskId: taskId)
+    }
+
+    // MARK: - Agent Runs
+
+    public func saveAgentRun(_ run: AgentRun) async throws {
+        try db.insertAgentRun(run)
+    }
+
+    public func updateAgentRun(_ run: AgentRun) async throws {
+        try db.updateAgentRun(run)
+    }
+
+    public func fetchAgentRun(id: UUID) throws -> AgentRun? {
+        try db.fetchAgentRun(id: id)
+    }
+
+    public func fetchLatestAgentRun(scriptId: UUID) throws -> AgentRun? {
+        try db.fetchLatestAgentRun(scriptId: scriptId)
+    }
+
+    public func fetchAgentRuns(scriptId: UUID, limit: Int = 50) throws -> [AgentRun] {
+        try db.fetchAgentRuns(scriptId: scriptId, limit: limit)
     }
 }
