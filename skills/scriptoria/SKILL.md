@@ -6,12 +6,23 @@ description: >
   a task every hour", "list my scripts", or "set up a cron job".
 metadata:
   author: scriptoria
-  version: "0.1.0"
+  version: "0.1.2"
 ---
 
 # Scriptoria — Automation Script Manager
 
 Manage, run, and schedule shell scripts on macOS via the `scriptoria` CLI.
+
+## Scheduling Policy
+
+- For any request to create/update/enable/disable/remove a schedule, prefer `scriptoria schedule ...` commands.
+- Do not default to direct `launchd` or `cron` file edits; only use them when the user explicitly requests low-level setup or when Scriptoria CLI cannot represent the requested schedule.
+
+## Supported Coding Agents
+
+- Codex (native app-server mode)
+- Claude (via local adapter exposing the same app-server JSON-RPC contract)
+- Kimi (via local adapter exposing the same app-server JSON-RPC contract)
 
 ## File Conventions
 
@@ -91,14 +102,28 @@ scriptoria add <path> [options]
 | `--interpreter` | `-i` | `auto`, `bash`, `zsh`, `sh`, `node`, `python3`, `ruby`, `osascript`, `binary` |
 | `--tags` | | Comma-separated tags |
 | `--skill` | | Path to a skill file for AI agents |
+| `--task-name` | | Task name for post-script agent runs and memory |
+| `--default-model` | | Default model used by post-script agent |
 
 ### Run a script
 
 ```bash
 scriptoria run "Title"              # By title
 scriptoria run 3A1F2B4C             # By UUID prefix
-scriptoria run "Title" --notify     # Send macOS notification on finish
+scriptoria run --id "3A1F2B4C-..."  # By explicit UUID
+scriptoria run "Title" --model gpt-5.3-codex --no-steer
+scriptoria run "Title" --agent-prompt "Focus on failing logs first"
+scriptoria run "Title" --command "Please continue with tests" --command "/interrupt"
 ```
+
+Common run flags:
+- `--no-notify`: suppress completion notification
+- `--scheduled`: scheduled mode (less output)
+- `--model`: override post-script agent model
+- `--agent-prompt`: append extra user instruction for agent stage
+- `--skip-agent`: skip post-script agent stage
+- `--no-steer`: disable interactive steering input
+- `--command`: scripted steer/interrupt commands (repeatable, supports `/interrupt`)
 
 ### List / Search / Remove
 
@@ -141,7 +166,7 @@ scriptoria config set-dir ~/data    # Change data directory
 ## Agent Workflow Tips
 
 - After `scriptoria add`, the printed UUID can be used for `run` / `schedule` commands.
-- All commands are non-interactive — safe for automation.
+- For non-interactive automation, provide `--model` and `--no-steer` (or use `--scheduled`).
 - Exit code of `scriptoria run` matches the script's exit code.
 - Run history (stdout, stderr, exit code) is saved to the database.
 - Chain commands for a complete workflow:
@@ -156,6 +181,23 @@ chmod +x ~/.scriptoria/scripts/check.sh
 scriptoria add ~/.scriptoria/scripts/check.sh --title "Health Check" --tags "monitoring"
 scriptoria run "Health Check"
 scriptoria schedule add "Health Check" --every 15
+```
+
+## Pre-script Gate (Agent Trigger)
+
+When GUI `Agent Trigger` is set to `Only when pre-script is true`, Scriptoria evaluates the script output gate before running agent stage.
+
+Gate parser contract:
+- Scriptoria reads the **last non-empty line of STDOUT**.
+- Accepted values:
+  - `true` / `1` / `yes` / `on` -> run post-script agent stage
+  - `false` / `0` / `no` / `off` -> skip post-script agent stage
+- If the last non-empty line is not parseable (or JSON with a recognized boolean field), trigger check is invalid and run is marked with trigger error.
+
+Recommended gate-script pattern:
+```bash
+# keep logs above...
+echo "true"   # or "false" as the final non-empty stdout line
 ```
 
 ## Troubleshooting

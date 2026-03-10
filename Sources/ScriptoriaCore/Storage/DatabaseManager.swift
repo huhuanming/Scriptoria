@@ -103,6 +103,77 @@ public final class DatabaseManager: Sendable {
             }
         }
 
+        migrator.registerMigration("v4") { db in
+            try db.create(table: "script_agent_profiles") { t in
+                t.autoIncrementedPrimaryKey("id")
+                t.column("scriptId", .text)
+                    .notNull()
+                    .unique()
+                    .references("scripts", onDelete: .cascade)
+                t.column("taskName", .text).notNull().defaults(to: "")
+                t.column("defaultModel", .text).notNull().defaults(to: "")
+                t.column("createdAt", .datetime).notNull()
+                t.column("updatedAt", .datetime).notNull()
+            }
+            try db.create(
+                index: "idx_script_agent_profiles_scriptId",
+                on: "script_agent_profiles",
+                columns: ["scriptId"],
+                unique: true
+            )
+
+            try db.create(table: "agent_runs") { t in
+                t.primaryKey("id", .text).notNull()
+                t.column("scriptId", .text).notNull().references("scripts", onDelete: .cascade)
+                t.column("scriptRunId", .text).references("script_runs", onDelete: .setNull)
+                t.column("taskId", .integer).references("script_agent_profiles", column: "id", onDelete: .setNull)
+                t.column("taskName", .text).notNull().defaults(to: "")
+                t.column("model", .text).notNull().defaults(to: "")
+                t.column("threadId", .text).notNull()
+                t.column("turnId", .text).notNull()
+                t.column("startedAt", .datetime).notNull()
+                t.column("finishedAt", .datetime)
+                t.column("status", .text).notNull()
+                t.column("finalMessage", .text).notNull().defaults(to: "")
+                t.column("output", .text).notNull().defaults(to: "")
+                t.column("taskMemoryPath", .text)
+            }
+            try db.create(
+                index: "idx_agent_runs_scriptId_startedAt",
+                on: "agent_runs",
+                columns: ["scriptId", "startedAt"]
+            )
+            try db.create(
+                index: "idx_agent_runs_status_startedAt",
+                on: "agent_runs",
+                columns: ["status", "startedAt"]
+            )
+
+            let now = Date()
+            let scriptRows = try Row.fetchAll(db, sql: "SELECT id, title, createdAt, updatedAt FROM scripts")
+            for row in scriptRows {
+                let scriptId: String = row["id"]
+                let title: String = row["title"]
+                let createdAt: Date = row["createdAt"]
+                let updatedAt: Date = row["updatedAt"]
+                try db.execute(
+                    sql: """
+                        INSERT OR IGNORE INTO script_agent_profiles (scriptId, taskName, defaultModel, createdAt, updatedAt)
+                        VALUES (?, ?, ?, ?, ?)
+                        """,
+                    arguments: [scriptId, title, "", createdAt, updatedAt > createdAt ? updatedAt : now]
+                )
+            }
+        }
+
+        migrator.registerMigration("v5") { db in
+            try db.alter(table: "scripts") { t in
+                t.add(column: "agentTriggerMode", .text)
+                    .notNull()
+                    .defaults(to: AgentTriggerMode.always.rawValue)
+            }
+        }
+
         return migrator
     }
 
@@ -211,13 +282,13 @@ public final class DatabaseManager: Sendable {
             updated.updatedAt = Date()
             try db.execute(
                 sql: """
-                    UPDATE scripts SET title=?, description=?, path=?, skill=?, interpreter=?,
+                    UPDATE scripts SET title=?, description=?, path=?, skill=?, interpreter=?, agentTriggerMode=?,
                     isFavorite=?, createdAt=?, updatedAt=?, lastRunAt=?, lastRunStatus=?, runCount=?
                     WHERE id=?
                     """,
                 arguments: [
                     updated.title, updated.description, updated.path,
-                    updated.skill, updated.interpreter.rawValue, updated.isFavorite,
+                    updated.skill, updated.interpreter.rawValue, updated.agentTriggerMode.rawValue, updated.isFavorite,
                     updated.createdAt, updated.updatedAt,
                     updated.lastRunAt, updated.lastRunStatus?.rawValue,
                     updated.runCount, updated.id.uuidString
@@ -231,6 +302,12 @@ public final class DatabaseManager: Sendable {
                     arguments: [updated.id.uuidString, tag]
                 )
             }
+            try self.upsertScriptAgentProfileRow(
+                scriptId: updated.id,
+                taskName: updated.agentTaskName.isEmpty ? updated.title : updated.agentTaskName,
+                defaultModel: updated.defaultModel,
+                db: db
+            )
         }
     }
 
@@ -383,6 +460,136 @@ public final class DatabaseManager: Sendable {
                 arguments: [limit]
             )
             return rows.map { row in self.scriptRunFromRow(row) }
+        }
+    }
+
+    // MARK: - Script Agent Profiles
+
+    public func fetchScriptAgentProfile(scriptId: UUID) throws -> ScriptAgentProfile? {
+        try dbPool.read { db in
+            guard let row = try Row.fetchOne(
+                db,
+                sql: "SELECT * FROM script_agent_profiles WHERE scriptId = ?",
+                arguments: [scriptId.uuidString]
+            ) else { return nil }
+            return self.scriptAgentProfileFromRow(row)
+        }
+    }
+
+    public func fetchScriptAgentProfile(taskId: Int) throws -> ScriptAgentProfile? {
+        try dbPool.read { db in
+            guard let row = try Row.fetchOne(
+                db,
+                sql: "SELECT * FROM script_agent_profiles WHERE id = ?",
+                arguments: [taskId]
+            ) else { return nil }
+            return self.scriptAgentProfileFromRow(row)
+        }
+    }
+
+    public func upsertScriptAgentProfile(
+        scriptId: UUID,
+        taskName: String,
+        defaultModel: String
+    ) throws {
+        try dbPool.write { db in
+            try self.upsertScriptAgentProfileRow(
+                scriptId: scriptId,
+                taskName: taskName,
+                defaultModel: defaultModel,
+                db: db
+            )
+        }
+    }
+
+    // MARK: - Agent Runs
+
+    public func insertAgentRun(_ run: AgentRun) throws {
+        try dbPool.write { db in
+            try db.execute(
+                sql: """
+                    INSERT INTO agent_runs (
+                        id, scriptId, scriptRunId, taskId, taskName, model, threadId, turnId,
+                        startedAt, finishedAt, status, finalMessage, output, taskMemoryPath
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                arguments: [
+                    run.id.uuidString,
+                    run.scriptId.uuidString,
+                    run.scriptRunId?.uuidString,
+                    run.taskId,
+                    run.taskName,
+                    run.model,
+                    run.threadId,
+                    run.turnId,
+                    run.startedAt,
+                    run.finishedAt,
+                    run.status.rawValue,
+                    run.finalMessage,
+                    run.output,
+                    run.taskMemoryPath
+                ]
+            )
+        }
+    }
+
+    public func updateAgentRun(_ run: AgentRun) throws {
+        try dbPool.write { db in
+            try db.execute(
+                sql: """
+                    UPDATE agent_runs
+                    SET scriptRunId=?, taskId=?, taskName=?, model=?, threadId=?, turnId=?,
+                        finishedAt=?, status=?, finalMessage=?, output=?, taskMemoryPath=?
+                    WHERE id=?
+                    """,
+                arguments: [
+                    run.scriptRunId?.uuidString,
+                    run.taskId,
+                    run.taskName,
+                    run.model,
+                    run.threadId,
+                    run.turnId,
+                    run.finishedAt,
+                    run.status.rawValue,
+                    run.finalMessage,
+                    run.output,
+                    run.taskMemoryPath,
+                    run.id.uuidString
+                ]
+            )
+        }
+    }
+
+    public func fetchAgentRun(id: UUID) throws -> AgentRun? {
+        try dbPool.read { db in
+            guard let row = try Row.fetchOne(
+                db,
+                sql: "SELECT * FROM agent_runs WHERE id = ?",
+                arguments: [id.uuidString]
+            ) else { return nil }
+            return self.agentRunFromRow(row)
+        }
+    }
+
+    public func fetchLatestAgentRun(scriptId: UUID) throws -> AgentRun? {
+        try dbPool.read { db in
+            guard let row = try Row.fetchOne(
+                db,
+                sql: "SELECT * FROM agent_runs WHERE scriptId = ? ORDER BY startedAt DESC LIMIT 1",
+                arguments: [scriptId.uuidString]
+            ) else { return nil }
+            return self.agentRunFromRow(row)
+        }
+    }
+
+    public func fetchAgentRuns(scriptId: UUID, limit: Int = 50) throws -> [AgentRun] {
+        try dbPool.read { db in
+            let rows = try Row.fetchAll(
+                db,
+                sql: "SELECT * FROM agent_runs WHERE scriptId = ? ORDER BY startedAt DESC LIMIT ?",
+                arguments: [scriptId.uuidString, limit]
+            )
+            return rows.map { self.agentRunFromRow($0) }
         }
     }
 
@@ -543,12 +750,12 @@ public final class DatabaseManager: Sendable {
     private func insertScriptRow(_ script: Script, db: Database) throws {
         try db.execute(
             sql: """
-                INSERT INTO scripts (id, title, description, path, skill, interpreter, isFavorite, createdAt, updatedAt, lastRunAt, lastRunStatus, runCount)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO scripts (id, title, description, path, skill, interpreter, agentTriggerMode, isFavorite, createdAt, updatedAt, lastRunAt, lastRunStatus, runCount)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
             arguments: [
                 script.id.uuidString, script.title, script.description, script.path,
-                script.skill, script.interpreter.rawValue, script.isFavorite,
+                script.skill, script.interpreter.rawValue, script.agentTriggerMode.rawValue, script.isFavorite,
                 script.createdAt, script.updatedAt,
                 script.lastRunAt, script.lastRunStatus?.rawValue,
                 script.runCount
@@ -560,6 +767,12 @@ public final class DatabaseManager: Sendable {
                 arguments: [script.id.uuidString, tag]
             )
         }
+        try upsertScriptAgentProfileRow(
+            scriptId: script.id,
+            taskName: script.agentTaskName.isEmpty ? script.title : script.agentTaskName,
+            defaultModel: AgentRuntimeCatalog.normalizeModel(script.defaultModel),
+            db: db
+        )
     }
 
     private func scriptFromRow(_ row: Row, db: Database) throws -> Script {
@@ -567,6 +780,16 @@ public final class DatabaseManager: Sendable {
         let id = UUID(uuidString: idStr)!
         let tags = try String.fetchAll(db, sql: "SELECT tag FROM script_tags WHERE scriptId = ? ORDER BY tag", arguments: [idStr])
         let statusStr: String? = row["lastRunStatus"]
+        let profileRow = try Row.fetchOne(
+            db,
+            sql: "SELECT * FROM script_agent_profiles WHERE scriptId = ? LIMIT 1",
+            arguments: [idStr]
+        )
+        let profile = profileRow.map(self.scriptAgentProfileFromRow)
+        let taskName = profile?.taskName ?? (row["title"] as String)
+        let defaultModel = AgentRuntimeCatalog.normalizeModel(profile?.defaultModel)
+        let triggerModeRaw: String? = row["agentTriggerMode"]
+        let triggerMode = triggerModeRaw.flatMap(AgentTriggerMode.init(rawValue:)) ?? .always
 
         return Script(
             id: id,
@@ -574,6 +797,10 @@ public final class DatabaseManager: Sendable {
             description: row["description"],
             path: row["path"],
             skill: row["skill"],
+            agentTaskId: profile?.id,
+            agentTaskName: taskName,
+            defaultModel: defaultModel,
+            agentTriggerMode: triggerMode,
             interpreter: Interpreter(rawValue: row["interpreter"]) ?? .auto,
             tags: tags,
             isFavorite: row["isFavorite"],
@@ -599,6 +826,58 @@ public final class DatabaseManager: Sendable {
             output: row["output"],
             errorOutput: row["errorOutput"],
             pid: pidInt.map { Int32($0) }
+        )
+    }
+
+    private func scriptAgentProfileFromRow(_ row: Row) -> ScriptAgentProfile {
+        ScriptAgentProfile(
+            id: row["id"],
+            scriptId: UUID(uuidString: row["scriptId"] as String)!,
+            taskName: row["taskName"],
+            defaultModel: AgentRuntimeCatalog.normalizeModel(row["defaultModel"] as String),
+            createdAt: row["createdAt"],
+            updatedAt: row["updatedAt"]
+        )
+    }
+
+    private func agentRunFromRow(_ row: Row) -> AgentRun {
+        let scriptRunIdStr: String? = row["scriptRunId"]
+        return AgentRun(
+            id: UUID(uuidString: row["id"] as String)!,
+            scriptId: UUID(uuidString: row["scriptId"] as String)!,
+            scriptRunId: scriptRunIdStr.flatMap(UUID.init(uuidString:)),
+            taskId: row["taskId"],
+            taskName: row["taskName"],
+            model: row["model"],
+            threadId: row["threadId"],
+            turnId: row["turnId"],
+            startedAt: row["startedAt"],
+            finishedAt: row["finishedAt"],
+            status: AgentRunStatus(rawValue: row["status"] as String) ?? .failed,
+            finalMessage: row["finalMessage"],
+            output: row["output"],
+            taskMemoryPath: row["taskMemoryPath"]
+        )
+    }
+
+    private func upsertScriptAgentProfileRow(
+        scriptId: UUID,
+        taskName: String,
+        defaultModel: String,
+        db: Database
+    ) throws {
+        let now = Date()
+        let normalizedDefaultModel = AgentRuntimeCatalog.normalizeModel(defaultModel)
+        try db.execute(
+            sql: """
+                INSERT INTO script_agent_profiles (scriptId, taskName, defaultModel, createdAt, updatedAt)
+                VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(scriptId) DO UPDATE SET
+                    taskName=excluded.taskName,
+                    defaultModel=excluded.defaultModel,
+                    updatedAt=excluded.updatedAt
+                """,
+            arguments: [scriptId.uuidString, taskName, normalizedDefaultModel, now, now]
         )
     }
 

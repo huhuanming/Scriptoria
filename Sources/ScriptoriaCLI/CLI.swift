@@ -16,6 +16,7 @@ struct ScriptoriaCLI: AsyncParsableCommand {
             TagsCommand.self,
             ScheduleCommand.self,
             ConfigCommand.self,
+            MemoryCommand.self,
             PsCommand.self,
             LogsCommand.self,
             KillCommand.self,

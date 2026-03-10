@@ -36,7 +36,7 @@ let package = Package(
         // Tests
         .testTarget(
             name: "ScriptoriaCoreTests",
-            dependencies: ["ScriptoriaCore"],
+            dependencies: ["ScriptoriaCore", "ScriptoriaCLI"],
             path: "Tests/ScriptoriaCoreTests"
         ),
     ]

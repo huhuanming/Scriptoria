@@ -26,6 +26,12 @@ struct AddCommand: AsyncParsableCommand {
     @Option(name: .long, help: "Path to a skill file for AI agents")
     var skill: String?
 
+    @Option(name: .long, help: "Task name for post-script agent runs and memory")
+    var taskName: String?
+
+    @Option(name: .long, help: "Default model for post-script agent runs")
+    var defaultModel: String?
+
     func run() async throws {
         let store = ScriptStore.fromConfig()
         try await store.load()
@@ -58,12 +64,16 @@ struct AddCommand: AsyncParsableCommand {
 
         // Generate title from filename if not provided
         let scriptTitle = title ?? URL(fileURLWithPath: resolvedPath).deletingPathExtension().lastPathComponent
+        let resolvedTaskName = taskName?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let finalTaskName = (resolvedTaskName?.isEmpty == false) ? resolvedTaskName! : scriptTitle
 
         let script = Script(
             title: scriptTitle,
             description: description,
             path: resolvedPath,
             skill: resolvedSkill,
+            agentTaskName: finalTaskName,
+            defaultModel: AgentRuntimeCatalog.normalizeModel(defaultModel),
             interpreter: interp,
             tags: tagList
         )
@@ -74,6 +84,10 @@ struct AddCommand: AsyncParsableCommand {
         print("   Path: \(script.path)")
         if !resolvedSkill.isEmpty {
             print("   Skill: \(resolvedSkill)")
+        }
+        print("   Task: \(script.agentTaskName)")
+        if !script.defaultModel.isEmpty {
+            print("   Default Model: \(script.defaultModel)")
         }
         if !tagList.isEmpty {
             print("   Tags: \(tagList.joined(separator: ", "))")

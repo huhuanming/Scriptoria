@@ -1,0 +1,32 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+jobs:
+  test:
+    name: Swift Test
+    runs-on: macos-15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Show toolchain
+        run: swift --version
+
+      - name: Ensure Swift 6+
+        run: |
+          SWIFT_MAJOR="$(swift --version | awk '/Swift version/ { split($3, v, "."); print v[1] }')"
+          if [ "${SWIFT_MAJOR}" -lt 6 ]; then
+            echo "Swift 6+ is required by Package.swift (swift-tools-version: 6.0)."
+            exit 1
+          fi
+
+      - name: Run full test suite
+        run: swift test
+
+      - name: Run run+agent E2E test only
+        run: swift test --filter ScriptoriaCoreTests.ScriptoriaCLITests/testRunCommandAgentStage

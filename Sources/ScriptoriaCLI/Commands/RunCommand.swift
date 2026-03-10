@@ -1,4 +1,5 @@
 import ArgumentParser
+import Darwin
 import Foundation
 import ScriptoriaCore
 
@@ -19,6 +20,21 @@ struct RunCommand: AsyncParsableCommand {
 
     @Flag(name: .long, help: "Scheduled run (less output)")
     var scheduled: Bool = false
+
+    @Option(name: .long, help: "Override model for post-script agent run")
+    var model: String?
+
+    @Option(name: .long, help: "Additional prompt for the post-script agent")
+    var agentPrompt: String?
+
+    @Flag(name: .long, help: "Skip post-script agent stage")
+    var skipAgent: Bool = false
+
+    @Flag(name: .long, help: "Disable steering input while agent is running")
+    var noSteer: Bool = false
+
+    @Option(name: .long, help: "Send a scripted agent command (repeatable, supports /interrupt)")
+    var command: [String] = []
 
     func run() async throws {
         let config = Config.load()
@@ -106,13 +122,184 @@ struct RunCommand: AsyncParsableCommand {
         let duration = result.duration.map { String(format: "%.2fs", $0) } ?? "?"
         print("\(statusIcon) \(result.status.rawValue) (exit: \(result.exitCode ?? -1), duration: \(duration))")
 
+        if result.status == .failure {
+            if !noNotify {
+                await NotificationManager.shared.notifyRunComplete(result)
+            }
+            throw ExitCode.failure
+        }
+
+        if !skipAgent {
+            switch AgentTriggerEvaluator.evaluate(script: script, scriptRun: runRecord) {
+            case .run:
+                try await runAgentStage(
+                    script: script,
+                    scriptRun: runRecord,
+                    store: store,
+                    config: config
+                )
+            case .skip(let reason):
+                print("⏭ Agent skipped: \(reason)")
+            case .invalid(let reason):
+                print("❌ Agent trigger check failed: \(reason)")
+                throw ExitCode.failure
+            }
+        }
+
         // Always notify unless --no-notify
         if !noNotify {
             await NotificationManager.shared.notifyRunComplete(result)
         }
+    }
 
-        if result.status == .failure {
+    private func runAgentStage(
+        script: Script,
+        scriptRun: ScriptRun,
+        store: ScriptStore,
+        config: Config
+    ) async throws {
+        let taskName = script.agentTaskName.isEmpty ? script.title : script.agentTaskName
+        let selectedModel = resolveModel(for: script)
+        let memoryManager = MemoryManager(config: config)
+        let workspaceMemory = memoryManager.readWorkspaceMemory(taskId: script.agentTaskId, taskName: taskName)
+        let skillContent = readFileIfExists(path: script.skill)
+
+        let developerInstructions = PostScriptAgentRunner.buildDeveloperInstructions(
+            skillContent: clippedText(skillContent, max: 40_000),
+            workspaceMemory: clippedText(workspaceMemory, max: 40_000)
+        )
+
+        var prompt = PostScriptAgentRunner.buildInitialPrompt(
+            taskName: taskName,
+            script: script,
+            scriptRun: scriptRun
+        )
+        if let agentPrompt, !agentPrompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            prompt += "\n\nAdditional user instruction:\n\(agentPrompt)\n"
+        }
+
+        let workingDirectory = URL(fileURLWithPath: script.path).deletingLastPathComponent().path
+        print("\n🤖 Starting agent task: \(taskName)")
+        print("   Model: \(selectedModel)")
+        print(String(repeating: "─", count: 50))
+
+        let session = try await PostScriptAgentRunner.launch(
+            options: PostScriptAgentLaunchOptions(
+                workingDirectory: workingDirectory,
+                model: selectedModel,
+                userPrompt: prompt,
+                developerInstructions: developerInstructions
+            ),
+            onEvent: { event in
+                switch event.kind {
+                case .agentMessage, .commandOutput, .info:
+                    print(event.text, terminator: "")
+                case .error:
+                    FileHandle.standardError.write(Data(event.text.utf8))
+                }
+            }
+        )
+
+        var agentRun = AgentRun(
+            scriptId: script.id,
+            scriptRunId: scriptRun.id,
+            taskId: script.agentTaskId,
+            taskName: taskName,
+            model: selectedModel,
+            threadId: await session.threadId,
+            turnId: await session.turnId
+        )
+        try await store.saveAgentRun(agentRun)
+
+        var steerTask: Task<Void, Never>?
+        if shouldEnableSteer {
+            print("\n[steer] Enter text to guide the running agent. Use /interrupt to stop.")
+            steerTask = Task.detached(priority: .utility) {
+                while !Task.isCancelled {
+                    guard let line = readLine(strippingNewline: true) else {
+                        break
+                    }
+                    do {
+                        guard let command = AgentCommandInput.parseCLI(line) else { continue }
+                        try await send(command: command, to: session)
+                        if case .interrupt = command {
+                            break
+                        }
+                    } catch {
+                        FileHandle.standardError.write(Data("[steer-error] \(error.localizedDescription)\n".utf8))
+                    }
+                }
+            }
+        }
+
+        for raw in command {
+            guard let command = AgentCommandInput.parseCLI(raw) else { continue }
+            try await send(command: command, to: session)
+            if case .interrupt = command {
+                break
+            }
+        }
+
+        let agentResult = try await session.waitForCompletion()
+        steerTask?.cancel()
+
+        agentRun.threadId = agentResult.threadId
+        agentRun.turnId = agentResult.turnId
+        agentRun.status = agentResult.status
+        agentRun.finishedAt = agentResult.finishedAt
+        agentRun.finalMessage = agentResult.finalMessage
+        agentRun.output = agentResult.output
+
+        let taskMemoryPath = try memoryManager.writeTaskMemory(
+            taskId: script.agentTaskId,
+            taskName: taskName,
+            script: script,
+            scriptRun: scriptRun,
+            agentResult: agentResult
+        )
+        agentRun.taskMemoryPath = taskMemoryPath
+        try await store.updateAgentRun(agentRun)
+
+        print(String(repeating: "─", count: 50))
+        let duration = agentResult.finishedAt.timeIntervalSince(agentResult.startedAt)
+        print("🤖 Agent \(agentResult.status.rawValue) · \(String(format: "%.2fs", duration))")
+        print("📘 Task Memory: \(taskMemoryPath)")
+
+        if agentResult.status == .failed {
             throw ExitCode.failure
+        }
+    }
+
+    private var shouldEnableSteer: Bool {
+        !scheduled && !noSteer && isatty(fileno(stdin)) == 1
+    }
+
+    private func resolveModel(for _: Script) -> String {
+        if let model {
+            let value = model.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !value.isEmpty { return value }
+        }
+        return AgentRuntimeCatalog.defaultModel
+    }
+
+    private func readFileIfExists(path: String) -> String? {
+        let trimmed = path.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        return try? String(contentsOfFile: trimmed, encoding: .utf8)
+    }
+
+    private func clippedText(_ text: String?, max: Int) -> String? {
+        guard let text else { return nil }
+        if text.count <= max { return text }
+        return String(text.prefix(max)) + "\n\n[truncated]"
+    }
+
+    private func send(command: AgentCommandInput, to session: PostScriptAgentSession) async throws {
+        switch command {
+        case .steer(let text):
+            try await session.steer(text)
+        case .interrupt:
+            try await session.interrupt()
         }
     }
 }

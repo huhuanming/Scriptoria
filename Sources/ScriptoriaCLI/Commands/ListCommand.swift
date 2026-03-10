@@ -63,6 +63,10 @@ struct ListCommand: AsyncParsableCommand {
             if !script.skill.isEmpty {
                 print("       🤖 Skill: \(script.skill)")
             }
+            if let taskId = script.agentTaskId {
+                let modelPart = script.defaultModel.isEmpty ? "" : " · model: \(script.defaultModel)"
+                print("       🧠 Task: [\(taskId)] \(script.agentTaskName)\(modelPart)")
+            }
 
             let shortId = String(script.id.uuidString.prefix(8))
             let tags = script.tags.isEmpty ? "" : " [\(script.tags.joined(separator: ", "))]"

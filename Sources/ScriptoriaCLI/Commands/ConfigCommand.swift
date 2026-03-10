@@ -26,6 +26,7 @@ struct ShowConfig: AsyncParsableCommand {
         print("  Data directory:    \(config.dataDirectory)")
         print("  Database:          \(config.dbDirectory)/scriptoria.db")
         print("  Scripts:           \(config.scriptsDirectory)/")
+        print("  Memory:            \(config.memoryDirectory)/")
         print("  Notify on finish:  \(config.notifyOnCompletion)")
         print("  Running indicator: \(config.showRunningIndicator)")
         print()
@@ -65,4 +66,3 @@ struct SetDataDir: AsyncParsableCommand {
         print("✅ Data directory set to: \(resolvedPath)")
     }
 }
-

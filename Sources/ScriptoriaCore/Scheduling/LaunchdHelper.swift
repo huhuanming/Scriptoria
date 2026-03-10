@@ -5,12 +5,28 @@ public final class LaunchdHelper: Sendable {
     private static let plistPrefix = "com.scriptoria.task"
 
     private static var launchAgentsDir: String {
+        if let override = ProcessInfo.processInfo.environment["SCRIPTORIA_LAUNCH_AGENTS_DIR"],
+           !override.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return NSString(string: override).expandingTildeInPath
+        }
         let home = FileManager.default.homeDirectoryForCurrentUser.path
         return "\(home)/Library/LaunchAgents"
     }
 
+    private static var launchctlPath: String {
+        if let override = ProcessInfo.processInfo.environment["SCRIPTORIA_LAUNCHCTL_PATH"],
+           !override.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return NSString(string: override).expandingTildeInPath
+        }
+        return "/bin/launchctl"
+    }
+
     /// Generate and install a launchd plist for a schedule
     public static func install(schedule: Schedule, cliPath: String) throws {
+        if !FileManager.default.fileExists(atPath: launchAgentsDir) {
+            try FileManager.default.createDirectory(atPath: launchAgentsDir, withIntermediateDirectories: true)
+        }
+
         let plistName = "\(plistPrefix).\(schedule.id.uuidString)"
         let plistPath = "\(launchAgentsDir)/\(plistName).plist"
 
@@ -55,7 +71,7 @@ public final class LaunchdHelper: Sendable {
 
         // Load the agent
         let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/bin/launchctl")
+        process.executableURL = URL(fileURLWithPath: launchctlPath)
         process.arguments = ["load", plistPath]
         try process.run()
         process.waitUntilExit()
@@ -68,7 +84,7 @@ public final class LaunchdHelper: Sendable {
 
         // Unload first
         let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/bin/launchctl")
+        process.executableURL = URL(fileURLWithPath: launchctlPath)
         process.arguments = ["unload", plistPath]
         try process.run()
         process.waitUntilExit()
