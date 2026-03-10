@@ -6,7 +6,7 @@ description: >
   a task every hour", "list my scripts", or "set up a cron job".
 metadata:
   author: scriptoria
-  version: "0.1.1"
+  version: "0.1.2"
 ---
 
 # Scriptoria — Automation Script Manager
@@ -181,6 +181,23 @@ chmod +x ~/.scriptoria/scripts/check.sh
 scriptoria add ~/.scriptoria/scripts/check.sh --title "Health Check" --tags "monitoring"
 scriptoria run "Health Check"
 scriptoria schedule add "Health Check" --every 15
+```
+
+## Pre-script Gate (Agent Trigger)
+
+When GUI `Agent Trigger` is set to `Only when pre-script is true`, Scriptoria evaluates the script output gate before running agent stage.
+
+Gate parser contract:
+- Scriptoria reads the **last non-empty line of STDOUT**.
+- Accepted values:
+  - `true` / `1` / `yes` / `on` -> run post-script agent stage
+  - `false` / `0` / `no` / `off` -> skip post-script agent stage
+- If the last non-empty line is not parseable (or JSON with a recognized boolean field), trigger check is invalid and run is marked with trigger error.
+
+Recommended gate-script pattern:
+```bash
+# keep logs above...
+echo "true"   # or "false" as the final non-empty stdout line
 ```
 
 ## Troubleshooting
