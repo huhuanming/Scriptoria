@@ -45,7 +45,12 @@ public final class MemoryManager: Sendable {
         }
 
         let timestamp = formatTimestamp(agentResult.finishedAt)
-        let path = "\(dir)/\(timestamp).md"
+        var path = "\(dir)/\(timestamp).md"
+        var suffix = 1
+        while fm.fileExists(atPath: path) {
+            path = "\(dir)/\(timestamp)-\(suffix).md"
+            suffix += 1
+        }
 
         let good = buildGoodPoints(scriptRun: scriptRun, agentResult: agentResult)
         let bad = buildBadPoints(scriptRun: scriptRun, agentResult: agentResult)
@@ -297,7 +302,7 @@ public final class MemoryManager: Sendable {
     private func formatTimestamp(_ date: Date) -> String {
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "en_US_POSIX")
-        formatter.dateFormat = "yyyyMMddHHmmss"
+        formatter.dateFormat = "yyyyMMddHHmmssSSS"
         return formatter.string(from: date)
     }
 

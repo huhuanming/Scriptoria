@@ -243,6 +243,34 @@ struct ScriptoriaCLITests {
         }
     }
 
+    @Test("run command agent crash should fail fast")
+    func testRunCommandAgentCrashFailsFast() async throws {
+        try await withTestWorkspace(prefix: "scriptoria-cli-agent-crash") { workspace in
+            let codexPath = try workspace.makeFakeCodex()
+            try await withEnvironment([
+                "SCRIPTORIA_CODEX_EXECUTABLE": codexPath,
+                "SCRIPTORIA_FAKE_CODEX_MODE": "exit_after_turn_start"
+            ]) {
+                let scriptPath = try workspace.makeScript(name: "agent-crash.sh", content: "#!/bin/sh\necho ok\n")
+                _ = try runCLI(arguments: ["add", scriptPath, "--title", "AgentCrash"])
+
+                let run = try runCLI(
+                    arguments: ["run", "AgentCrash", "--no-notify", "--no-steer", "--model", "gpt-test"],
+                    timeout: 10
+                )
+                #expect(run.timedOut == false)
+                #expect(run.exitCode != 0)
+                #expect(run.stdout.contains("Agent failed"))
+
+                let store = ScriptStore.fromConfig()
+                try await store.load()
+                let script = try #require(store.get(title: "AgentCrash"))
+                let latest = try #require(try store.fetchLatestAgentRun(scriptId: script.id))
+                #expect(latest.status == .failed)
+            }
+        }
+    }
+
     @Test("memory summarize by script and task-id")
     func testMemorySummarizeCommand() async throws {
         try await withTestWorkspace(prefix: "scriptoria-cli-memory") { workspace in

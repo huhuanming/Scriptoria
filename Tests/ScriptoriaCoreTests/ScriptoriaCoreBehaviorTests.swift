@@ -283,12 +283,13 @@ struct ScriptoriaCoreBehaviorTests {
                 output: "ok"
             )
 
+            let fixedFinishedAt = Date()
             let first = AgentExecutionResult(
                 threadId: "t1",
                 turnId: "u1",
                 model: "m1",
                 startedAt: Date().addingTimeInterval(-2),
-                finishedAt: Date(),
+                finishedAt: fixedFinishedAt,
                 status: .completed,
                 finalMessage: "first",
                 output: "first-out"
@@ -298,15 +299,15 @@ struct ScriptoriaCoreBehaviorTests {
                 turnId: "u2",
                 model: "m2",
                 startedAt: Date().addingTimeInterval(-1),
-                finishedAt: Date(),
+                finishedAt: fixedFinishedAt,
                 status: .failed,
                 finalMessage: "",
                 output: "second-out"
             )
 
             let p1 = try memory.writeTaskMemory(taskId: 1, taskName: "Task/Name", script: script, scriptRun: scriptRun, agentResult: first)
-            try await Task.sleep(nanoseconds: 1_100_000_000)
             let p2 = try memory.writeTaskMemory(taskId: 1, taskName: "Task/Name", script: script, scriptRun: scriptRun, agentResult: second)
+            #expect(p1 != p2)
             #expect(FileManager.default.fileExists(atPath: p1))
             #expect(FileManager.default.fileExists(atPath: p2))
             #expect(p1.contains("/memory/Task-Name/task/"))

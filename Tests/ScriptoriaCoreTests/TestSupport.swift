@@ -129,6 +129,8 @@ struct TestWorkspace {
                         send({"jsonrpc": "2.0", "method": "turn/completed", "params": {"turn": {"id": turn_id, "status": "completed"}}})
                     elif mode == "interrupt_on_start":
                         send({"jsonrpc": "2.0", "method": "turn/completed", "params": {"turn": {"id": turn_id, "status": "interrupted"}}})
+                    elif mode == "exit_after_turn_start":
+                        sys.exit(3)
                 elif method == "turn/steer":
                     steer_text = ""
                     try:

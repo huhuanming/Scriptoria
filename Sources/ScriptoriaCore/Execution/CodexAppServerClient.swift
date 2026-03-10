@@ -4,6 +4,7 @@ public enum CodexAppServerEvent: Sendable {
     case threadStarted(threadId: String)
     case turnStarted(turnId: String)
     case turnCompleted(turnId: String, status: String)
+    case processTerminated(exitCode: Int32)
     case agentMessageDelta(itemId: String, delta: String)
     case commandOutputDelta(itemId: String, delta: String)
     case agentMessageCompleted(phase: String?, text: String)
@@ -265,6 +266,7 @@ public actor CodexAppServerClient {
         }
         pendingResponses.removeAll()
 
+        emit(.processTerminated(exitCode: exitCode))
         emit(.diagnostic("codex app-server exited with code \(exitCode)"))
     }
 

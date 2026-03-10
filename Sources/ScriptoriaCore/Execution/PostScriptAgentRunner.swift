@@ -125,6 +125,10 @@ public actor PostScriptAgentSession {
             guard turnId == self.turnId else { return }
             finish(status: mapStatus(status))
 
+        case .processTerminated(let exitCode):
+            onEvent?(AgentStreamEvent(kind: .error, text: "codex app-server exited with code \(exitCode)\n"))
+            finish(status: .failed)
+
         case .diagnostic(let line):
             onEvent?(AgentStreamEvent(kind: .info, text: line + "\n"))
         }
@@ -205,31 +209,36 @@ public enum PostScriptAgentRunner {
             .trimmingCharacters(in: .whitespacesAndNewlines)
         let executable = (envExecutable?.isEmpty == false) ? envExecutable! : options.codexExecutable
         let client = CodexAppServerClient(cwd: options.workingDirectory, executable: executable)
-        try await client.connect()
+        do {
+            try await client.connect()
 
-        let threadId = try await client.startThread(
-            model: options.model,
-            developerInstructions: options.developerInstructions,
-            approvalPolicy: options.approvalPolicy,
-            sandbox: options.sandbox
-        )
+            let threadId = try await client.startThread(
+                model: options.model,
+                developerInstructions: options.developerInstructions,
+                approvalPolicy: options.approvalPolicy,
+                sandbox: options.sandbox
+            )
 
-        let session = PostScriptAgentSession(
-            client: client,
-            threadId: threadId,
-            model: options.model,
-            onEvent: onEvent
-        )
+            let session = PostScriptAgentSession(
+                client: client,
+                threadId: threadId,
+                model: options.model,
+                onEvent: onEvent
+            )
 
-        await client.setEventHandler { event in
-            Task {
-                await session.handle(event: event)
+            await client.setEventHandler { event in
+                Task {
+                    await session.handle(event: event)
+                }
             }
-        }
 
-        let turnId = try await client.startTurn(threadId: threadId, input: options.userPrompt)
-        await session.activate(turnId: turnId)
-        return session
+            let turnId = try await client.startTurn(threadId: threadId, input: options.userPrompt)
+            await session.activate(turnId: turnId)
+            return session
+        } catch {
+            await client.shutdown()
+            throw error
+        }
     }
 
     public static func buildDeveloperInstructions(
