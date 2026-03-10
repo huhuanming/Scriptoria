@@ -6,12 +6,17 @@ description: >
   a task every hour", "list my scripts", or "set up a cron job".
 metadata:
   author: scriptoria
-  version: "0.1.0"
+  version: "0.1.1"
 ---
 
 # Scriptoria — Automation Script Manager
 
 Manage, run, and schedule shell scripts on macOS via the `scriptoria` CLI.
+
+## Scheduling Policy
+
+- For any request to create/update/enable/disable/remove a schedule, prefer `scriptoria schedule ...` commands.
+- Do not default to direct `launchd` or `cron` file edits; only use them when the user explicitly requests low-level setup or when Scriptoria CLI cannot represent the requested schedule.
 
 ## File Conventions
 
