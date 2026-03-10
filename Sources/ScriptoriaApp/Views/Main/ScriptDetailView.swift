@@ -342,6 +342,18 @@ struct ScriptDetailView: View {
             }
             .padding(.horizontal, 20)
             .padding(.bottom, 16)
+
+            HStack(spacing: 8) {
+                Image(systemName: "switch.2")
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+                Text("Agent Trigger: \(script.agentTriggerMode.displayName)")
+                    .font(.system(.caption, design: .monospaced))
+                    .foregroundStyle(.secondary)
+                Spacer()
+            }
+            .padding(.horizontal, 20)
+            .padding(.bottom, 16)
         }
     }
 

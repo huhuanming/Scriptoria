@@ -130,12 +130,20 @@ struct RunCommand: AsyncParsableCommand {
         }
 
         if !skipAgent {
-            try await runAgentStage(
-                script: script,
-                scriptRun: runRecord,
-                store: store,
-                config: config
-            )
+            switch AgentTriggerEvaluator.evaluate(script: script, scriptRun: runRecord) {
+            case .run:
+                try await runAgentStage(
+                    script: script,
+                    scriptRun: runRecord,
+                    store: store,
+                    config: config
+                )
+            case .skip(let reason):
+                print("⏭ Agent skipped: \(reason)")
+            case .invalid(let reason):
+                print("❌ Agent trigger check failed: \(reason)")
+                throw ExitCode.failure
+            }
         }
 
         // Always notify unless --no-notify

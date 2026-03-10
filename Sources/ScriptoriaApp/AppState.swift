@@ -251,8 +251,16 @@ final class AppState: ObservableObject {
             await NotificationManager.shared.notifyRunComplete(result)
         }
 
-        // Post-script agent stage
-        await runAgentStage(script: script, scriptRun: runRecord, modelOverride: modelOverride)
+        guard result.status == .success else { return }
+
+        switch AgentTriggerEvaluator.evaluate(script: script, scriptRun: runRecord) {
+        case .run:
+            await runAgentStage(script: script, scriptRun: runRecord, modelOverride: modelOverride)
+        case .skip(let reason):
+            currentOutput += "\n\n=== Agent Stage Skipped ===\n\(reason)\n"
+        case .invalid(let reason):
+            currentOutput += "\n\n[agent-trigger-error] \(reason)\n"
+        }
     }
 
     func stopScript(_ scriptId: UUID) {

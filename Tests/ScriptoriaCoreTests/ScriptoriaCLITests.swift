@@ -243,6 +243,58 @@ struct ScriptoriaCLITests {
         }
     }
 
+    @Test("run command skips agent when pre-script output is false")
+    func testRunCommandAgentTriggerSkip() async throws {
+        try await withTestWorkspace(prefix: "scriptoria-cli-agent-skip") { workspace in
+            let scriptPath = try workspace.makeScript(name: "gate-false.sh", content: "#!/bin/sh\necho false\n")
+            _ = try runCLI(arguments: ["add", scriptPath, "--title", "GateFalse"])
+
+            let store = ScriptStore.fromConfig()
+            try await store.load()
+            var script = try #require(store.get(title: "GateFalse"))
+            script.agentTriggerMode = .preScriptTrue
+            try await store.update(script)
+
+            let run = try runCLI(
+                arguments: ["run", "GateFalse", "--no-notify", "--no-steer"],
+                extraEnvironment: ["SCRIPTORIA_CODEX_EXECUTABLE": "/tmp/scriptoria-codex-not-found"]
+            )
+
+            #expect(run.exitCode == 0)
+            #expect(run.stdout.contains("Agent skipped"))
+            #expect(run.stdout.contains("Starting agent task") == false)
+            #expect(try store.fetchLatestAgentRun(scriptId: script.id) == nil)
+        }
+    }
+
+    @Test("run command starts agent when pre-script output is true")
+    func testRunCommandAgentTriggerRun() async throws {
+        try await withTestWorkspace(prefix: "scriptoria-cli-agent-run") { workspace in
+            let codexPath = try workspace.makeFakeCodex()
+            try await withEnvironment([
+                "SCRIPTORIA_CODEX_EXECUTABLE": codexPath,
+                "SCRIPTORIA_FAKE_CODEX_MODE": "complete"
+            ]) {
+                let scriptPath = try workspace.makeScript(name: "gate-true.sh", content: "#!/bin/sh\necho true\n")
+                _ = try runCLI(arguments: ["add", scriptPath, "--title", "GateTrue"])
+
+                let store = ScriptStore.fromConfig()
+                try await store.load()
+                var script = try #require(store.get(title: "GateTrue"))
+                script.agentTriggerMode = .preScriptTrue
+                try await store.update(script)
+
+                let run = try runCLI(arguments: ["run", "GateTrue", "--no-notify", "--no-steer"], timeout: 20)
+                #expect(run.exitCode == 0)
+                #expect(run.stdout.contains("Starting agent task"))
+                #expect(run.stdout.contains("agent delta"))
+
+                let latest = try #require(try store.fetchLatestAgentRun(scriptId: script.id))
+                #expect(latest.status == .completed)
+            }
+        }
+    }
+
     @Test("run command shuts down codex process after turn completed")
     func testRunCommandShutsDownCodexProcessOnCompletion() async throws {
         try await withTestWorkspace(prefix: "scriptoria-cli-agent-shutdown") { workspace in

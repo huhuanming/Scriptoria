@@ -166,6 +166,14 @@ public final class DatabaseManager: Sendable {
             }
         }
 
+        migrator.registerMigration("v5") { db in
+            try db.alter(table: "scripts") { t in
+                t.add(column: "agentTriggerMode", .text)
+                    .notNull()
+                    .defaults(to: AgentTriggerMode.always.rawValue)
+            }
+        }
+
         return migrator
     }
 
@@ -274,13 +282,13 @@ public final class DatabaseManager: Sendable {
             updated.updatedAt = Date()
             try db.execute(
                 sql: """
-                    UPDATE scripts SET title=?, description=?, path=?, skill=?, interpreter=?,
+                    UPDATE scripts SET title=?, description=?, path=?, skill=?, interpreter=?, agentTriggerMode=?,
                     isFavorite=?, createdAt=?, updatedAt=?, lastRunAt=?, lastRunStatus=?, runCount=?
                     WHERE id=?
                     """,
                 arguments: [
                     updated.title, updated.description, updated.path,
-                    updated.skill, updated.interpreter.rawValue, updated.isFavorite,
+                    updated.skill, updated.interpreter.rawValue, updated.agentTriggerMode.rawValue, updated.isFavorite,
                     updated.createdAt, updated.updatedAt,
                     updated.lastRunAt, updated.lastRunStatus?.rawValue,
                     updated.runCount, updated.id.uuidString
@@ -742,12 +750,12 @@ public final class DatabaseManager: Sendable {
     private func insertScriptRow(_ script: Script, db: Database) throws {
         try db.execute(
             sql: """
-                INSERT INTO scripts (id, title, description, path, skill, interpreter, isFavorite, createdAt, updatedAt, lastRunAt, lastRunStatus, runCount)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO scripts (id, title, description, path, skill, interpreter, agentTriggerMode, isFavorite, createdAt, updatedAt, lastRunAt, lastRunStatus, runCount)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
             arguments: [
                 script.id.uuidString, script.title, script.description, script.path,
-                script.skill, script.interpreter.rawValue, script.isFavorite,
+                script.skill, script.interpreter.rawValue, script.agentTriggerMode.rawValue, script.isFavorite,
                 script.createdAt, script.updatedAt,
                 script.lastRunAt, script.lastRunStatus?.rawValue,
                 script.runCount
@@ -780,6 +788,8 @@ public final class DatabaseManager: Sendable {
         let profile = profileRow.map(self.scriptAgentProfileFromRow)
         let taskName = profile?.taskName ?? (row["title"] as String)
         let defaultModel = AgentRuntimeCatalog.normalizeModel(profile?.defaultModel)
+        let triggerModeRaw: String? = row["agentTriggerMode"]
+        let triggerMode = triggerModeRaw.flatMap(AgentTriggerMode.init(rawValue:)) ?? .always
 
         return Script(
             id: id,
@@ -790,6 +800,7 @@ public final class DatabaseManager: Sendable {
             agentTaskId: profile?.id,
             agentTaskName: taskName,
             defaultModel: defaultModel,
+            agentTriggerMode: triggerMode,
             interpreter: Interpreter(rawValue: row["interpreter"]) ?? .auto,
             tags: tags,
             isFavorite: row["isFavorite"],

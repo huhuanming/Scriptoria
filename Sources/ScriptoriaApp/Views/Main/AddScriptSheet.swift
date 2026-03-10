@@ -12,6 +12,7 @@ struct AddScriptSheet: View {
     @State private var skill = ""
     @State private var taskName = ""
     @State private var defaultModel = AgentRuntimeCatalog.defaultModel
+    @State private var agentTriggerMode: AgentTriggerMode = .always
     @State private var interpreter: Interpreter = .auto
     @State private var tagsInput = ""
     @State private var isFavorite = false
@@ -66,6 +67,14 @@ struct AddScriptSheet: View {
 
                 TextField("Task Name (for memory namespace)", text: $taskName)
                 TextField("Default Model", text: $defaultModel)
+                Picker("Agent Trigger", selection: $agentTriggerMode) {
+                    ForEach(AgentTriggerMode.allCases, id: \.self) { mode in
+                        Text(mode.displayName).tag(mode)
+                    }
+                }
+                Text(agentTriggerMode.helperText)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
 
                 Picker("Interpreter", selection: $interpreter) {
                     ForEach(Interpreter.allCases, id: \.self) { interp in
@@ -112,6 +121,7 @@ struct AddScriptSheet: View {
                             skill: resolvedSkill,
                             agentTaskName: taskName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? title : taskName.trimmingCharacters(in: .whitespacesAndNewlines),
                             defaultModel: AgentRuntimeCatalog.normalizeModel(defaultModel),
+                            agentTriggerMode: agentTriggerMode,
                             interpreter: interpreter,
                             tags: tags,
                             isFavorite: isFavorite
@@ -141,6 +151,7 @@ struct EditScriptSheet: View {
     @State private var skill: String
     @State private var taskName: String
     @State private var defaultModel: String
+    @State private var agentTriggerMode: AgentTriggerMode
     @State private var interpreter: Interpreter
     @State private var tagsInput: String
     @State private var isFavorite: Bool
@@ -154,6 +165,7 @@ struct EditScriptSheet: View {
         self._skill = State(initialValue: script.skill)
         self._taskName = State(initialValue: script.agentTaskName)
         self._defaultModel = State(initialValue: AgentRuntimeCatalog.normalizeModel(script.defaultModel))
+        self._agentTriggerMode = State(initialValue: script.agentTriggerMode)
         self._interpreter = State(initialValue: script.interpreter)
         self._tagsInput = State(initialValue: script.tags.joined(separator: ", "))
         self._isFavorite = State(initialValue: script.isFavorite)
@@ -202,6 +214,14 @@ struct EditScriptSheet: View {
 
                 TextField("Task Name (for memory namespace)", text: $taskName)
                 TextField("Default Model", text: $defaultModel)
+                Picker("Agent Trigger", selection: $agentTriggerMode) {
+                    ForEach(AgentTriggerMode.allCases, id: \.self) { mode in
+                        Text(mode.displayName).tag(mode)
+                    }
+                }
+                Text(agentTriggerMode.helperText)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
 
                 Picker("Interpreter", selection: $interpreter) {
                     ForEach(Interpreter.allCases, id: \.self) { interp in
@@ -239,6 +259,7 @@ struct EditScriptSheet: View {
                         updated.skill = resolvedSkill
                         updated.agentTaskName = taskName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? title : taskName.trimmingCharacters(in: .whitespacesAndNewlines)
                         updated.defaultModel = AgentRuntimeCatalog.normalizeModel(defaultModel)
+                        updated.agentTriggerMode = agentTriggerMode
                         updated.interpreter = interpreter
                         updated.tags = tags
                         updated.isFavorite = isFavorite

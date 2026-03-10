@@ -404,6 +404,34 @@ struct ScriptoriaCoreBehaviorTests {
         }
     }
 
+    @Test("agent trigger evaluator supports pre-script true/false")
+    func testAgentTriggerEvaluator() async throws {
+        let trueRun = ScriptRun(scriptId: UUID(), scriptTitle: "t", status: .success, output: "checked\ntrue\n")
+        let falseRun = ScriptRun(scriptId: UUID(), scriptTitle: "t", status: .success, output: "checked\nfalse\n")
+        let invalidRun = ScriptRun(scriptId: UUID(), scriptTitle: "t", status: .success, output: "checked\nmaybe\n")
+
+        switch AgentTriggerEvaluator.evaluate(mode: .preScriptTrue, scriptRun: trueRun) {
+        case .run:
+            break
+        default:
+            Issue.record("Expected run when pre-script output is true.")
+        }
+
+        switch AgentTriggerEvaluator.evaluate(mode: .preScriptTrue, scriptRun: falseRun) {
+        case .skip:
+            break
+        default:
+            Issue.record("Expected skip when pre-script output is false.")
+        }
+
+        switch AgentTriggerEvaluator.evaluate(mode: .preScriptTrue, scriptRun: invalidRun) {
+        case .invalid:
+            break
+        default:
+            Issue.record("Expected invalid when pre-script output is not parseable.")
+        }
+    }
+
     @Test("post-script agent prompt and instruction builders")
     func testPostScriptAgentRunnerBehavior() async throws {
         try await withTestWorkspace(prefix: "scriptoria-core-agent") { workspace in
