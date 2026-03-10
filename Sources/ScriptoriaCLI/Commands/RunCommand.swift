@@ -266,27 +266,12 @@ struct RunCommand: AsyncParsableCommand {
         !scheduled && !noSteer && isatty(fileno(stdin)) == 1
     }
 
-    private func resolveModel(for script: Script) -> String {
+    private func resolveModel(for _: Script) -> String {
         if let model {
             let value = model.trimmingCharacters(in: .whitespacesAndNewlines)
             if !value.isEmpty { return value }
         }
-
-        let defaultModel = script.defaultModel.trimmingCharacters(in: .whitespacesAndNewlines)
-        if scheduled {
-            return defaultModel.isEmpty ? "gpt-5.3-codex" : defaultModel
-        }
-
-        let fallback = defaultModel.isEmpty ? "gpt-5.3-codex" : defaultModel
-        if isatty(fileno(stdin)) == 1 {
-            print("Model [\(fallback)]: ", terminator: "")
-            if let input = readLine(strippingNewline: true)?
-                .trimmingCharacters(in: .whitespacesAndNewlines),
-               !input.isEmpty {
-                return input
-            }
-        }
-        return fallback
+        return AgentRuntimeCatalog.defaultModel
     }
 
     private func readFileIfExists(path: String) -> String? {

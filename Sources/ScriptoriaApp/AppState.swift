@@ -389,15 +389,14 @@ final class AppState: ObservableObject {
         updateRunningState()
     }
 
-    private func resolveModel(script: Script, override: String?) -> String {
+    private func resolveModel(script _: Script, override: String?) -> String {
         if let override {
             let value = override.trimmingCharacters(in: .whitespacesAndNewlines)
             if !value.isEmpty {
                 return value
             }
         }
-        let defaultModel = script.defaultModel.trimmingCharacters(in: .whitespacesAndNewlines)
-        return defaultModel.isEmpty ? "gpt-5.3-codex" : defaultModel
+        return AgentRuntimeCatalog.defaultModel
     }
 
     private func readFileIfExists(path: String) -> String? {

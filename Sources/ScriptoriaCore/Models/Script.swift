@@ -27,7 +27,7 @@ public struct Script: Codable, Identifiable, Sendable {
         skill: String = "",
         agentTaskId: Int? = nil,
         agentTaskName: String = "",
-        defaultModel: String = "",
+        defaultModel: String = AgentRuntimeCatalog.defaultModel,
         interpreter: Interpreter = .auto,
         tags: [String] = [],
         isFavorite: Bool = false,

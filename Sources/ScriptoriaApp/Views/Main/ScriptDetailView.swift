@@ -6,8 +6,9 @@ struct ScriptDetailView: View {
     let script: Script
     @EnvironmentObject var appState: AppState
     @State private var showEditSheet = false
-    @State private var showRunSheet = false
-    @State private var runModelOverride = ""
+    @State private var runModelOverride = AgentRuntimeCatalog.defaultModel
+    @State private var runModelOptions: [String] = [AgentRuntimeCatalog.defaultModel]
+    @State private var runtimeSnapshot = AgentRuntimeCatalog.discover()
     @State private var runHistory: [ScriptRun] = []
     @State private var selectedRun: ScriptRun?
     @State private var isAddingTag = false
@@ -42,15 +43,23 @@ struct ScriptDetailView: View {
         .onChange(of: script.id) { _, _ in
             loadHistory()
             selectedRun = nil
-            runModelOverride = script.defaultModel
+            runModelOverride = AgentRuntimeCatalog.defaultModel
+            refreshRunModelOptions()
             Task { await appState.reloadSchedules() }
+        }
+        .onChange(of: script.defaultModel) { _, _ in
+            refreshRunModelOptions()
+        }
+        .onReceive(appState.$scripts) { _ in
+            refreshRunModelOptions()
         }
         .onChange(of: appState.currentOutput) { _, _ in
             loadHistory()
         }
         .onAppear {
             loadHistory()
-            runModelOverride = script.defaultModel
+            runModelOverride = AgentRuntimeCatalog.defaultModel
+            refreshRunModelOptions()
             Task { await appState.reloadSchedules() }
         }
         .toolbar {
@@ -79,8 +88,7 @@ struct ScriptDetailView: View {
                     .help("Stop script")
                 } else {
                     Button {
-                        runModelOverride = script.defaultModel
-                        showRunSheet = true
+                        runWithSelectedModel()
                     } label: {
                         Image(systemName: "play.fill")
                             .contentTransition(.symbolEffect(.replace))
@@ -92,18 +100,6 @@ struct ScriptDetailView: View {
         .sheet(isPresented: $showEditSheet) {
             EditScriptSheet(script: script, isPresented: $showEditSheet)
                 .environmentObject(appState)
-        }
-        .sheet(isPresented: $showRunSheet) {
-            RunWithModelSheet(
-                scriptTitle: script.title,
-                defaultModel: script.defaultModel,
-                modelOverride: $runModelOverride,
-                isPresented: $showRunSheet
-            ) { model in
-                Task {
-                    await appState.runScript(script, modelOverride: model)
-                }
-            }
         }
     }
 
@@ -136,28 +132,40 @@ struct ScriptDetailView: View {
 
                 Spacer()
 
-                // Run/Stop button
-                if isRunning {
-                    Button {
-                        appState.stopScript(script.id)
-                    } label: {
-                        HStack(spacing: 6) {
-                            Image(systemName: "stop.fill")
-                            Text("Stop")
+                VStack(alignment: .trailing, spacing: 6) {
+                    // Run/Stop button
+                    if isRunning {
+                        Button {
+                            appState.stopScript(script.id)
+                        } label: {
+                            HStack(spacing: 6) {
+                                Image(systemName: "stop.fill")
+                                Text("Stop")
+                            }
                         }
-                    }
-                    .buttonStyle(RunButtonStyle(isRunning: isRunning))
-                } else {
-                    Button {
-                        runModelOverride = script.defaultModel
-                        showRunSheet = true
-                    } label: {
-                        HStack(spacing: 6) {
-                            Image(systemName: "play.fill")
-                            Text("Run")
+                        .buttonStyle(RunButtonStyle(isRunning: isRunning))
+                    } else {
+                        Button {
+                            runWithSelectedModel()
+                        } label: {
+                            HStack(spacing: 6) {
+                                Image(systemName: "play.fill")
+                                Text("Run")
+                            }
                         }
+                        .buttonStyle(RunButtonStyle(isRunning: false))
+
+                        Picker("", selection: $runModelOverride) {
+                            ForEach(runModelOptions, id: \.self) { model in
+                                Text(modelMenuLabel(for: model)).tag(model)
+                            }
+                        }
+                        .labelsHidden()
+                        .pickerStyle(.menu)
+                        .controlSize(.small)
+                        .frame(minWidth: 220, alignment: .trailing)
+                        .help(modelPickerHelp)
                     }
-                    .buttonStyle(RunButtonStyle(isRunning: false))
                 }
             }
 
@@ -556,6 +564,68 @@ struct ScriptDetailView: View {
         newTagText = ""
     }
 
+    private func runWithSelectedModel() {
+        Task {
+            await appState.runScript(script, modelOverride: runModelOverride)
+        }
+    }
+
+    private func refreshRunModelOptions() {
+        runtimeSnapshot = AgentRuntimeCatalog.discover()
+
+        var options: [String] = []
+        appendUniqueModel(into: &options, model: AgentRuntimeCatalog.defaultModel)
+        appendUniqueModel(into: &options, model: AgentRuntimeCatalog.normalizeModel(script.defaultModel))
+        for model in runtimeSnapshot.models {
+            appendUniqueModel(into: &options, model: model)
+        }
+        for saved in appState.scripts.map(\.defaultModel) {
+            appendUniqueModel(into: &options, model: AgentRuntimeCatalog.normalizeModel(saved))
+        }
+
+        if options.isEmpty {
+            options = [AgentRuntimeCatalog.defaultModel]
+        }
+        runModelOptions = options
+
+        if let existing = options.first(where: { $0.caseInsensitiveCompare(runModelOverride) == .orderedSame }) {
+            runModelOverride = existing
+        } else {
+            runModelOverride = options[0]
+        }
+    }
+
+    private func appendUniqueModel(into options: inout [String], model: String) {
+        let trimmed = model.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        if options.contains(where: { $0.caseInsensitiveCompare(trimmed) == .orderedSame }) {
+            return
+        }
+        options.append(trimmed)
+    }
+
+    private func modelMenuLabel(for model: String) -> String {
+        let provider = AgentRuntimeCatalog.provider(forModel: model).displayName
+        if model.caseInsensitiveCompare(AgentRuntimeCatalog.defaultModel) == .orderedSame {
+            return "\(provider) / GPT-5.3-Codex"
+        }
+        return "\(provider) / \(model)"
+    }
+
+    private var modelPickerHelp: String {
+        let configured = runtimeSnapshot.activeProvider
+        let providerName = configured?.provider.displayName ?? runtimeSnapshot.configuredProvider.displayName
+        let source = configured?.source ?? "default"
+        let detected = runtimeSnapshot.providers
+            .filter(\.isAvailable)
+            .map { $0.provider.displayName }
+            .joined(separator: ", ")
+        if detected.isEmpty {
+            return "Configured provider: \(providerName) (\(source)). No local agent executable detected."
+        }
+        return "Configured provider: \(providerName) (\(source)). Detected providers: \(detected)."
+    }
+
     private func runStatusBadge(_ status: RunStatus) -> some View {
         let (icon, color, label): (String, Color, String) = switch status {
         case .success: ("checkmark.circle.fill", Theme.successColor, "Success")
@@ -616,48 +686,6 @@ struct ScriptDetailView: View {
         case .cancelled: return Theme.warningColor
         case nil: return .secondary
         }
-    }
-}
-
-struct RunWithModelSheet: View {
-    let scriptTitle: String
-    let defaultModel: String
-    @Binding var modelOverride: String
-    @Binding var isPresented: Bool
-    let onRun: (String?) -> Void
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Text("Run Script")
-                .font(.headline)
-            Text(scriptTitle)
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-
-            TextField("Model (leave blank to use default)", text: $modelOverride)
-                .textFieldStyle(.roundedBorder)
-
-            if !defaultModel.isEmpty {
-                Text("Default: \(defaultModel)")
-                    .font(.caption)
-                    .foregroundStyle(.tertiary)
-            }
-
-            HStack {
-                Spacer()
-                Button("Cancel") {
-                    isPresented = false
-                }
-                Button("Run") {
-                    let value = modelOverride.trimmingCharacters(in: .whitespacesAndNewlines)
-                    onRun(value.isEmpty ? nil : value)
-                    isPresented = false
-                }
-                .keyboardShortcut(.defaultAction)
-            }
-        }
-        .padding(20)
-        .frame(width: 420)
     }
 }
 

@@ -73,7 +73,7 @@ struct AddCommand: AsyncParsableCommand {
             path: resolvedPath,
             skill: resolvedSkill,
             agentTaskName: finalTaskName,
-            defaultModel: defaultModel?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "",
+            defaultModel: AgentRuntimeCatalog.normalizeModel(defaultModel),
             interpreter: interp,
             tags: tagList
         )

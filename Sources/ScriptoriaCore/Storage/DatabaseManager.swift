@@ -762,7 +762,7 @@ public final class DatabaseManager: Sendable {
         try upsertScriptAgentProfileRow(
             scriptId: script.id,
             taskName: script.agentTaskName.isEmpty ? script.title : script.agentTaskName,
-            defaultModel: script.defaultModel,
+            defaultModel: AgentRuntimeCatalog.normalizeModel(script.defaultModel),
             db: db
         )
     }
@@ -779,7 +779,7 @@ public final class DatabaseManager: Sendable {
         )
         let profile = profileRow.map(self.scriptAgentProfileFromRow)
         let taskName = profile?.taskName ?? (row["title"] as String)
-        let defaultModel = profile?.defaultModel ?? ""
+        let defaultModel = AgentRuntimeCatalog.normalizeModel(profile?.defaultModel)
 
         return Script(
             id: id,
@@ -823,7 +823,7 @@ public final class DatabaseManager: Sendable {
             id: row["id"],
             scriptId: UUID(uuidString: row["scriptId"] as String)!,
             taskName: row["taskName"],
-            defaultModel: row["defaultModel"],
+            defaultModel: AgentRuntimeCatalog.normalizeModel(row["defaultModel"] as String),
             createdAt: row["createdAt"],
             updatedAt: row["updatedAt"]
         )
@@ -856,6 +856,7 @@ public final class DatabaseManager: Sendable {
         db: Database
     ) throws {
         let now = Date()
+        let normalizedDefaultModel = AgentRuntimeCatalog.normalizeModel(defaultModel)
         try db.execute(
             sql: """
                 INSERT INTO script_agent_profiles (scriptId, taskName, defaultModel, createdAt, updatedAt)
@@ -865,7 +866,7 @@ public final class DatabaseManager: Sendable {
                     defaultModel=excluded.defaultModel,
                     updatedAt=excluded.updatedAt
                 """,
-            arguments: [scriptId.uuidString, taskName, defaultModel, now, now]
+            arguments: [scriptId.uuidString, taskName, normalizedDefaultModel, now, now]
         )
     }
 

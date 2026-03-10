@@ -26,6 +26,52 @@ struct ScriptoriaCoreBehaviorTests {
         }
     }
 
+    @Test("agent runtime catalog detects providers from PATH")
+    func testAgentRuntimeCatalogProviderDiscovery() async throws {
+        try await withTestWorkspace(prefix: "scriptoria-core-agent-catalog") { workspace in
+            _ = try workspace.makeExecutable(relativePath: "bin/codex", content: "#!/bin/sh\nexit 0\n")
+            _ = try workspace.makeExecutable(relativePath: "bin/claude-adapter", content: "#!/bin/sh\nexit 0\n")
+            _ = try workspace.makeExecutable(relativePath: "bin/kimi-adapter", content: "#!/bin/sh\nexit 0\n")
+
+            let snapshot = AgentRuntimeCatalog.discover(
+                environment: ["PATH": workspace.rootURL.appendingPathComponent("bin").path],
+                homeDirectory: workspace.rootURL.path
+            )
+
+            #expect(snapshot.configuredProvider == .codex)
+            #expect(snapshot.activeProvider?.isAvailable == true)
+            #expect(snapshot.providers.contains(where: { $0.provider == .claude && $0.isAvailable }))
+            #expect(snapshot.providers.contains(where: { $0.provider == .kimi && $0.isAvailable }))
+            #expect(snapshot.models.contains(AgentRuntimeCatalog.defaultModel))
+            #expect(snapshot.models.contains("claude-sonnet"))
+            #expect(snapshot.models.contains("kimi-k2"))
+        }
+    }
+
+    @Test("agent runtime catalog honors configured executable override")
+    func testAgentRuntimeCatalogConfiguredExecutable() async throws {
+        try await withTestWorkspace(prefix: "scriptoria-core-agent-configured") { workspace in
+            let claudeAdapter = try workspace.makeExecutable(
+                relativePath: "agents/claude-adapter",
+                content: "#!/bin/sh\nexit 0\n"
+            )
+
+            let snapshot = AgentRuntimeCatalog.discover(
+                environment: [
+                    "SCRIPTORIA_CODEX_EXECUTABLE": claudeAdapter,
+                    "PATH": workspace.rootURL.appendingPathComponent("bin").path
+                ],
+                homeDirectory: workspace.rootURL.path
+            )
+
+            #expect(snapshot.configuredProvider == .claude)
+            #expect(snapshot.activeProvider?.resolvedPath == claudeAdapter)
+            #expect(snapshot.models.contains("claude-sonnet"))
+            #expect(AgentRuntimeCatalog.normalizeModel(nil) == AgentRuntimeCatalog.defaultModel)
+            #expect(AgentRuntimeCatalog.normalizeModel("  ") == AgentRuntimeCatalog.defaultModel)
+        }
+    }
+
     @Test("script store + agent profile + run storage")
     func testScriptStoreAndAgentPersistence() async throws {
         try await withTestWorkspace(prefix: "scriptoria-core-store") { workspace in
