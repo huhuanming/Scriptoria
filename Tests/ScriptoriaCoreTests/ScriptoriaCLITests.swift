@@ -243,6 +243,34 @@ struct ScriptoriaCLITests {
         }
     }
 
+    @Test("run command shuts down codex process after turn completed")
+    func testRunCommandShutsDownCodexProcessOnCompletion() async throws {
+        try await withTestWorkspace(prefix: "scriptoria-cli-agent-shutdown") { workspace in
+            let codexPath = try workspace.makeFakeCodex()
+            let pidFile = workspace.rootURL.appendingPathComponent("fake-codex.pid").path
+            try await withEnvironment([
+                "SCRIPTORIA_CODEX_EXECUTABLE": codexPath,
+                "SCRIPTORIA_FAKE_CODEX_MODE": "complete",
+                "SCRIPTORIA_FAKE_CODEX_PID_FILE": pidFile
+            ]) {
+                let scriptPath = try workspace.makeScript(name: "agent-shutdown.sh", content: "#!/bin/sh\necho ok\n")
+                _ = try runCLI(arguments: ["add", scriptPath, "--title", "AgentShutdown"])
+
+                let run = try runCLI(
+                    arguments: ["run", "AgentShutdown", "--no-notify", "--no-steer", "--model", "gpt-test"],
+                    timeout: 10
+                )
+                #expect(run.timedOut == false)
+                #expect(run.exitCode == 0)
+
+                let pidText = try #require(try? String(contentsOfFile: pidFile, encoding: .utf8))
+                let pid = try #require(Int32(pidText.trimmingCharacters(in: .whitespacesAndNewlines)))
+                waitForProcessToExit(pid, timeout: 3)
+                #expect(ProcessManager.isRunning(pid: pid) == false)
+            }
+        }
+    }
+
     @Test("run command agent crash should fail fast")
     func testRunCommandAgentCrashFailsFast() async throws {
         try await withTestWorkspace(prefix: "scriptoria-cli-agent-crash") { workspace in

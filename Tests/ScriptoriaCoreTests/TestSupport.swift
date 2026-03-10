@@ -32,7 +32,8 @@ struct TestWorkspace {
             "SCRIPTORIA_CODEX_EXECUTABLE": nil,
             "SCRIPTORIA_FAKE_CODEX_MODE": nil,
             "SCRIPTORIA_FAKE_CODEX_THREAD_ID": nil,
-            "SCRIPTORIA_FAKE_CODEX_TURN_ID": nil
+            "SCRIPTORIA_FAKE_CODEX_TURN_ID": nil,
+            "SCRIPTORIA_FAKE_CODEX_PID_FILE": nil
         ]
     }
 
@@ -93,6 +94,14 @@ struct TestWorkspace {
             mode = os.environ.get("SCRIPTORIA_FAKE_CODEX_MODE", "complete")
             thread_id = os.environ.get("SCRIPTORIA_FAKE_CODEX_THREAD_ID", "thread-test")
             turn_id = os.environ.get("SCRIPTORIA_FAKE_CODEX_TURN_ID", "turn-test")
+            pid_file = os.environ.get("SCRIPTORIA_FAKE_CODEX_PID_FILE")
+
+            if pid_file:
+                try:
+                    with open(pid_file, "w", encoding="utf-8") as f:
+                        f.write(str(os.getpid()))
+                except Exception:
+                    pass
 
             def send(payload):
                 sys.stdout.write(json.dumps(payload) + "\n")
@@ -297,7 +306,8 @@ func runCLI(
         "SCRIPTORIA_CODEX_EXECUTABLE",
         "SCRIPTORIA_FAKE_CODEX_MODE",
         "SCRIPTORIA_FAKE_CODEX_THREAD_ID",
-        "SCRIPTORIA_FAKE_CODEX_TURN_ID"
+        "SCRIPTORIA_FAKE_CODEX_TURN_ID",
+        "SCRIPTORIA_FAKE_CODEX_PID_FILE"
     ] {
         if let value = getenv(key).map({ String(cString: $0) }) {
             env[key] = value
