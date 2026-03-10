@@ -13,6 +13,7 @@ struct ScriptDetailView: View {
     @State private var isAddingTag = false
     @State private var newTagText = ""
     @State private var steerInput = ""
+    @State private var agentCommandMode: AgentCommandMode = .prompt
     @State private var averageDuration: TimeInterval?
     @State private var isSummarizingMemory = false
     @Environment(\.colorScheme) var colorScheme
@@ -368,16 +369,20 @@ struct ScriptDetailView: View {
 
                     if isAgentRunning {
                         HStack(spacing: 8) {
-                            TextField("Guide the running agent...", text: $steerInput)
+                            TextField(agentCommandMode == .prompt ? "Guide the running agent..." : "Send /interrupt", text: $steerInput)
                                 .textFieldStyle(.roundedBorder)
-                                .onSubmit { sendSteer() }
+                                .disabled(agentCommandMode == .interrupt)
+                                .onSubmit { sendAgentCommand() }
+                            Picker("", selection: $agentCommandMode) {
+                                Text("Prompt").tag(AgentCommandMode.prompt)
+                                Text("/interrupt").tag(AgentCommandMode.interrupt)
+                            }
+                            .pickerStyle(.menu)
+                            .frame(width: 120)
                             Button("Send") {
-                                sendSteer()
+                                sendAgentCommand()
                             }
-                            .disabled(steerInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                            Button("Interrupt") {
-                                appState.stopScript(script.id)
-                            }
+                            .disabled(agentCommandMode == .prompt && steerInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                         }
                         .padding(.horizontal, 20)
                     }
@@ -522,13 +527,19 @@ struct ScriptDetailView: View {
         Task { await appState.updateScript(updated) }
     }
 
-    private func sendSteer() {
-        let text = steerInput.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty else { return }
+    private func sendAgentCommand() {
+        let input = steerInput
         Task {
-            await appState.steerAgent(scriptId: script.id, input: text)
+            await appState.sendAgentCommand(
+                scriptId: script.id,
+                mode: agentCommandMode,
+                input: input
+            )
         }
         steerInput = ""
+        if agentCommandMode == .interrupt {
+            agentCommandMode = .prompt
+        }
     }
 
     private func commitNewTag() {

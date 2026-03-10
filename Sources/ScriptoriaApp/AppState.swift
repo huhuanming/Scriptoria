@@ -270,11 +270,19 @@ final class AppState: ObservableObject {
     }
 
     func steerAgent(scriptId: UUID, input: String) async {
+        await sendAgentCommand(scriptId: scriptId, mode: .prompt, input: input)
+    }
+
+    func sendAgentCommand(scriptId: UUID, mode: AgentCommandMode, input: String) async {
         guard let session = activeAgentSessions[scriptId] else { return }
-        let trimmed = input.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return }
+        guard let command = AgentCommandInput.from(mode: mode, input: input) else { return }
         do {
-            try await session.steer(trimmed)
+            switch command {
+            case .steer(let text):
+                try await session.steer(text)
+            case .interrupt:
+                try await session.interrupt()
+            }
         } catch {
             currentOutput += "\n[steer-error] \(error.localizedDescription)\n"
         }

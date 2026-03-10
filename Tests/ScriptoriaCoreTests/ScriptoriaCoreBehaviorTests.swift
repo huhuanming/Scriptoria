@@ -384,4 +384,15 @@ struct ScriptoriaCoreBehaviorTests {
             #expect(prompt.contains("Script STDOUT"))
         }
     }
+
+    @Test("agent input command parsing for cli/gui")
+    func testAgentInputCommandParsing() {
+        #expect(AgentCommandInput.parseCLI("  fix only lint  ") == .steer("fix only lint"))
+        #expect(AgentCommandInput.parseCLI("/interrupt") == .interrupt)
+        #expect(AgentCommandInput.parseCLI("   ") == nil)
+
+        #expect(AgentCommandInput.from(mode: .prompt, input: "next step") == .steer("next step"))
+        #expect(AgentCommandInput.from(mode: .interrupt, input: "ignored") == .interrupt)
+        #expect(AgentCommandInput.from(mode: .prompt, input: "   ") == nil)
+    }
 }

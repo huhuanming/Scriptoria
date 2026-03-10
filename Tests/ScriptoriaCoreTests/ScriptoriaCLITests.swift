@@ -271,6 +271,75 @@ struct ScriptoriaCLITests {
         }
     }
 
+    @Test("run command supports scripted steer commands")
+    func testRunCommandScriptedSteerCommands() async throws {
+        try await withTestWorkspace(prefix: "scriptoria-cli-agent-scripted-steer") { workspace in
+            let codexPath = try workspace.makeFakeCodex()
+            try await withEnvironment([
+                "SCRIPTORIA_CODEX_EXECUTABLE": codexPath,
+                "SCRIPTORIA_FAKE_CODEX_MODE": "wait_for_command"
+            ]) {
+                let scriptPath = try workspace.makeScript(name: "agent-steer.sh", content: "#!/bin/sh\necho ok\n")
+                _ = try runCLI(arguments: ["add", scriptPath, "--title", "AgentSteer"])
+
+                let run = try runCLI(
+                    arguments: [
+                        "run", "AgentSteer",
+                        "--no-notify",
+                        "--no-steer",
+                        "--model", "gpt-test",
+                        "--command", "focus only eslint fixes"
+                    ],
+                    timeout: 10
+                )
+                #expect(run.timedOut == false)
+                #expect(run.exitCode == 0)
+                #expect(run.stdout.contains("steer:focus only eslint fixes"))
+
+                let store = ScriptStore.fromConfig()
+                try await store.load()
+                let script = try #require(store.get(title: "AgentSteer"))
+                let latest = try #require(try store.fetchLatestAgentRun(scriptId: script.id))
+                #expect(latest.status == .completed)
+                #expect(latest.finalMessage == "steer done")
+            }
+        }
+    }
+
+    @Test("run command supports scripted interrupt command")
+    func testRunCommandScriptedInterruptCommand() async throws {
+        try await withTestWorkspace(prefix: "scriptoria-cli-agent-scripted-interrupt") { workspace in
+            let codexPath = try workspace.makeFakeCodex()
+            try await withEnvironment([
+                "SCRIPTORIA_CODEX_EXECUTABLE": codexPath,
+                "SCRIPTORIA_FAKE_CODEX_MODE": "wait_for_command"
+            ]) {
+                let scriptPath = try workspace.makeScript(name: "agent-interrupt.sh", content: "#!/bin/sh\necho ok\n")
+                _ = try runCLI(arguments: ["add", scriptPath, "--title", "AgentInterrupt"])
+
+                let run = try runCLI(
+                    arguments: [
+                        "run", "AgentInterrupt",
+                        "--no-notify",
+                        "--no-steer",
+                        "--model", "gpt-test",
+                        "--command", "/interrupt"
+                    ],
+                    timeout: 10
+                )
+                #expect(run.timedOut == false)
+                #expect(run.exitCode == 0)
+                #expect(run.stdout.contains("Agent interrupted"))
+
+                let store = ScriptStore.fromConfig()
+                try await store.load()
+                let script = try #require(store.get(title: "AgentInterrupt"))
+                let latest = try #require(try store.fetchLatestAgentRun(scriptId: script.id))
+                #expect(latest.status == .interrupted)
+            }
+        }
+    }
+
     @Test("memory summarize by script and task-id")
     func testMemorySummarizeCommand() async throws {
         try await withTestWorkspace(prefix: "scriptoria-cli-memory") { workspace in

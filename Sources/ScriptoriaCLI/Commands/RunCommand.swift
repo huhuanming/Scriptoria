@@ -33,6 +33,9 @@ struct RunCommand: AsyncParsableCommand {
     @Flag(name: .long, help: "Disable steering input while agent is running")
     var noSteer: Bool = false
 
+    @Option(name: .long, help: "Send a scripted agent command (repeatable, supports /interrupt)")
+    var command: [String] = []
+
     func run() async throws {
         let config = Config.load()
         let store = ScriptStore(config: config)
@@ -208,19 +211,24 @@ struct RunCommand: AsyncParsableCommand {
                     guard let line = readLine(strippingNewline: true) else {
                         break
                     }
-                    let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
-                    if trimmed.isEmpty { continue }
                     do {
-                        if trimmed == "/interrupt" {
-                            try await session.interrupt()
+                        guard let command = AgentCommandInput.parseCLI(line) else { continue }
+                        try await send(command: command, to: session)
+                        if case .interrupt = command {
                             break
-                        } else {
-                            try await session.steer(trimmed)
                         }
                     } catch {
                         FileHandle.standardError.write(Data("[steer-error] \(error.localizedDescription)\n".utf8))
                     }
                 }
+            }
+        }
+
+        for raw in command {
+            guard let command = AgentCommandInput.parseCLI(raw) else { continue }
+            try await send(command: command, to: session)
+            if case .interrupt = command {
+                break
             }
         }
 
@@ -291,5 +299,14 @@ struct RunCommand: AsyncParsableCommand {
         guard let text else { return nil }
         if text.count <= max { return text }
         return String(text.prefix(max)) + "\n\n[truncated]"
+    }
+
+    private func send(command: AgentCommandInput, to session: PostScriptAgentSession) async throws {
+        switch command {
+        case .steer(let text):
+            try await session.steer(text)
+        case .interrupt:
+            try await session.interrupt()
+        }
     }
 }
