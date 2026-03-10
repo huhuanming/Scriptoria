@@ -21,9 +21,9 @@ Built with Swift, SwiftUI, SQLite ([GRDB](https://github.com/groue/GRDB.swift)),
 A full-featured command-line tool for terminal workflows and automation:
 
 ```bash
-scriptoria add ./backup.sh --title "Backup" --tags "daily,infra"
+scriptoria add ./backup.sh --title "Backup" --task-name "Daily Backup" --default-model gpt-5.3-codex --tags "daily,infra"
 scriptoria list --tag daily
-scriptoria run "Backup" --notify
+scriptoria run "Backup" --model gpt-5.3-codex --no-steer
 scriptoria schedule add "Backup" --daily 09:00
 scriptoria search "deploy"
 scriptoria tags
@@ -32,9 +32,9 @@ scriptoria config show
 
 | Command | Description |
 |---------|-------------|
-| `add <path>` | Register a script (with title, description, interpreter, tags) |
+| `add <path>` | Register a script (title/description/interpreter/tags/agent task/model defaults) |
 | `list` | List scripts (filter by `--tag`, `--favorites`, `--recent`) |
-| `run <title-or-id>` | Execute a script, save run history |
+| `run <title-or-id>` | Execute a script, optional post-script agent stage (`--model`, `--agent-prompt`, `--command`, `--skip-agent`) |
 | `search <query>` | Search by title, description, or tags |
 | `remove <title-or-id>` | Remove a script from the database |
 | `tags` | List all tags with script counts |
@@ -46,18 +46,45 @@ scriptoria config show
 
 ### AI Agent Friendly
 
-Scriptoria is designed to work seamlessly with AI coding agents like [Claude Code](https://claude.ai/claude-code).
+Scriptoria includes a reusable [skill](skills/scriptoria/SKILL.md) and a provider-agnostic agent runtime, so coding agents can manage scripts end to end.
 
-**Claude Code Skill** — The project includes a [skill](skills/scriptoria/SKILL.md) that teaches Claude Code how to use Scriptoria. When the skill is active, Claude can:
+#### Install the Scriptoria Skill (Codex)
 
-- Write shell scripts and register them with `scriptoria add`
-- Run scripts and inspect output via `scriptoria run`
-- Set up automated schedules with `scriptoria schedule add`
-- Search and manage your script library
+```bash
+# Install from local repo (recommended during development)
+mkdir -p ~/.codex/skills/scriptoria
+ln -sfn "$(pwd)/skills/scriptoria/SKILL.md" ~/.codex/skills/scriptoria/SKILL.md
+
+# Or install from a GitHub repo path
+python3 ~/.codex/skills/.system/skill-installer/scripts/install-skill-from-github.py \
+  --repo <owner>/<repo> \
+  --path skills/scriptoria \
+  --ref main
+```
+
+After installation, restart Codex so the new skill is loaded.
+
+#### Best-fit Tasks for This Skill
+
+- Create/register scripts: `scriptoria add ...`
+- Run scripts and inspect output/errors: `scriptoria run ...`, `scriptoria logs ...`
+- Configure recurring jobs: `scriptoria schedule add|list|enable|disable|remove ...`
+- Search, classify, and clean up script inventory: `scriptoria search|tags|remove ...`
+- Memory-oriented post-script workflows (task/workspace summaries): `scriptoria memory ...`
+
+This skill should prefer Scriptoria CLI scheduling commands over direct `launchd` or `cron` edits.
+
+#### Supported Coding Agents
+
+- **Codex (native)**: direct support via `codex app-server`
+- **Claude (adapter mode)**: supported through a local adapter that exposes the same app-server JSON-RPC protocol
+- **Kimi (adapter mode)**: supported through a local adapter with the same contract
+
+Runtime provider selection is done by executable path (`SCRIPTORIA_CODEX_EXECUTABLE`), keeping `ScriptoriaCore` provider-agnostic.
 
 Example agent workflow:
+
 ```bash
-# Claude can do this entire flow autonomously:
 cat > /tmp/health-check.sh << 'EOF'
 #!/bin/bash
 curl -sf https://example.com/health && echo "OK" || echo "FAIL"
@@ -65,17 +92,16 @@ EOF
 chmod +x /tmp/health-check.sh
 
 scriptoria add /tmp/health-check.sh --title "Health Check" --tags "monitoring"
-scriptoria run "Health Check"
+scriptoria run "Health Check" --model gpt-5.3-codex --no-steer
 scriptoria schedule add "Health Check" --every 10
 ```
 
-**Why it works well with agents:**
+Why it works well with agents:
 
-- All CLI commands are non-interactive — no prompts, no TTY required
-- Structured output with clear success/error indicators
-- UUID-based script references for unambiguous identification
-- Full CRUD via CLI — agents never need the GUI
-- Chainable commands for end-to-end automation in a single flow
+- CLI flows are automation-friendly and mostly non-interactive
+- Structured status and stored run history simplify agent follow-up
+- UUID-based references reduce ambiguity
+- Full lifecycle coverage is available from CLI (create, run, schedule, inspect, clean up)
 
 ## Architecture
 
@@ -86,7 +112,7 @@ Scriptoria/
 │   ├── ScriptoriaCLI/       # CLI tool (swift-argument-parser)
 │   └── ScriptoriaCore/      # Shared library (models, storage, execution, scheduling)
 ├── Tests/
-├── skills/scriptoria/       # Claude Code skill definition
+├── skills/scriptoria/       # Scriptoria skill definition
 ├── CLAUDE.md                # AI agent project context
 └── Package.swift
 ```
