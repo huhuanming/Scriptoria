@@ -21,8 +21,16 @@ swift build -c release --product scriptoria 2>&1 | tail -3
 CLI_BIN="${PROJECT_DIR}/.build/release/scriptoria"
 echo "  CLI: ${CLI_BIN}"
 
-# Step 2: Build the App
+# Step 2: Build the App (clean first to ensure latest code)
 echo ""
+echo "→ Cleaning previous build..."
+xcodebuild \
+    -project "${PROJECT_DIR}/${APP_NAME}.xcodeproj" \
+    -scheme "${SCHEME}" \
+    -configuration Release \
+    -derivedDataPath "${BUILD_DIR}" \
+    clean 2>&1 | tail -1
+
 echo "→ Building ${APP_NAME}.app (Release)..."
 xcodebuild \
     -project "${PROJECT_DIR}/${APP_NAME}.xcodeproj" \

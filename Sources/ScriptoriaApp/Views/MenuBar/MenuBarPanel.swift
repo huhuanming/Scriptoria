@@ -171,6 +171,21 @@ struct MenuBarPanel: View {
         .task {
             await appState.loadScripts()
         }
+        .onAppear {
+            // Bring the menu bar panel to front above all other windows
+            NSApp.activate(ignoringOtherApps: true)
+            DispatchQueue.main.async {
+                // The MenuBarExtra .window style creates an NSPanel;
+                // find it and ensure it floats above other windows
+                for window in NSApp.windows {
+                    if let panel = window as? NSPanel,
+                       panel.isFloatingPanel || panel.becomesKeyOnlyIfNeeded {
+                        panel.level = .popUpMenu
+                        panel.orderFrontRegardless()
+                    }
+                }
+            }
+        }
     }
 }
 
