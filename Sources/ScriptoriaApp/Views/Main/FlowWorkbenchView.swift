@@ -138,9 +138,54 @@ private struct FlowListRow: View {
     }
 }
 
+private struct FlowEditorPoint: Codable, Equatable {
+    var x: Double
+    var y: Double
+}
+
+private struct FlowEditorLayoutFile: Codable, Equatable {
+    var version: Int
+    var nodes: [String: FlowEditorPoint]
+
+    init(version: Int = 1, nodes: [String: FlowEditorPoint]) {
+        self.version = version
+        self.nodes = nodes
+    }
+}
+
+private struct FlowEditorNodeDraft: Identifiable, Equatable {
+    var id: String { state.id }
+    var state: FlowStateDefinition
+    var center: CGPoint
+}
+
+private struct FlowEditorDraft: Equatable {
+    var definitionID: UUID
+    var flowPath: String
+    var version: String
+    var start: String
+    var defaults: FlowDefaults
+    var context: [String: FlowValue]
+    var nodes: [FlowEditorNodeDraft]
+    var selectedNodeID: String?
+    var isDirty: Bool
+}
+
+private struct FlowEditorCanvasEdge: Identifiable, Equatable {
+    var id: String {
+        "\(fromID)->\(label)->\(toID)"
+    }
+
+    var fromID: String
+    var toID: String
+    var label: String
+    var isBroken: Bool
+}
+
 struct FlowDetailView: View {
     enum Tab: String, CaseIterable, Identifiable {
         case overview = "Overview"
+        case editor = "Editor"
         case validateCompile = "Validate/Compile"
         case run = "Run"
         case dryRun = "Dry-Run"
@@ -160,6 +205,12 @@ struct FlowDetailView: View {
     @State private var initialCommandsText = ""
     @State private var liveCommandText = ""
     @State private var dryFixturePath = ""
+    @State private var editorDraft: FlowEditorDraft?
+    @State private var editorHistory: [FlowEditorDraft] = []
+    @State private var editorHistoryIndex: Int = -1
+    @State private var editorInfoMessage: String?
+    @State private var editorErrorMessage: String?
+    @State private var dragBaseCenters: [String: CGPoint] = [:]
 
     private var selectedSummary: FlowDefinitionStatusSummary? {
         appState.selectedFlowDefinition
@@ -192,6 +243,8 @@ struct FlowDetailView: View {
                         switch selectedTab {
                         case .overview:
                             overviewPanel(summary: summary)
+                        case .editor:
+                            editorPanel(summary: summary)
                         case .validateCompile:
                             validateCompilePanel(summary: summary)
                         case .run:
@@ -212,6 +265,12 @@ struct FlowDetailView: View {
                         let name = summary.definition.name
                         compileOutputPath = "\(base)/compiled/\(name).flow.ir.json"
                     }
+                    if editorDraft?.definitionID != summary.definition.id {
+                        loadEditorDraft(for: summary)
+                    }
+                }
+                .onChange(of: summary.definition.id) {
+                    loadEditorDraft(for: summary)
                 }
             } else {
                 ContentUnavailableView {
@@ -336,6 +395,468 @@ struct FlowDetailView: View {
             (currentGraphStateID == node.stateID ? Color.orange.opacity(0.12) : Color.clear),
             in: RoundedRectangle(cornerRadius: 6)
         )
+    }
+
+    @ViewBuilder
+    private func editorPanel(summary: FlowDefinitionStatusSummary) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 8) {
+                Menu("Add Node") {
+                    Button("Gate") { addEditorNode(type: .gate) }
+                    Button("Agent") { addEditorNode(type: .agent) }
+                    Button("Wait") { addEditorNode(type: .wait) }
+                    Button("Script") { addEditorNode(type: .script) }
+                    Button("End") { addEditorNode(type: .end) }
+                }
+                .disabled(editorDraft == nil)
+
+                Button("Delete Node") {
+                    deleteSelectedEditorNode()
+                }
+                .disabled(selectedEditorNode == nil)
+
+                Button("Auto Layout") {
+                    autoLayoutEditorNodes()
+                }
+                .disabled(editorDraft == nil)
+
+                Spacer()
+
+                Button("Undo") {
+                    undoEditor()
+                }
+                .disabled(editorHistoryIndex <= 0)
+
+                Button("Redo") {
+                    redoEditor()
+                }
+                .disabled(editorHistoryIndex < 0 || editorHistoryIndex >= editorHistory.count - 1)
+
+                Button("Revert") {
+                    loadEditorDraft(for: summary)
+                }
+                .disabled(!(editorDraft?.isDirty ?? false))
+
+                Button("Validate Draft") {
+                    validateEditorDraft()
+                }
+                .disabled(editorDraft == nil)
+
+                Button("Save") {
+                    Task { await saveEditorDraft() }
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(editorDraft == nil || !(editorDraft?.isDirty ?? false))
+            }
+
+            if let message = editorInfoMessage, !message.isEmpty {
+                Text(message)
+                    .font(.caption)
+                    .foregroundStyle(.green)
+            }
+            if let error = editorErrorMessage, !error.isEmpty {
+                Text(error)
+                    .font(.caption)
+                    .foregroundStyle(.red)
+            }
+
+            if let draft = editorDraft, draft.definitionID == summary.definition.id {
+                HSplitView {
+                    editorCanvas(draft: draft)
+                    editorInspector(draft: draft)
+                        .frame(minWidth: 330, idealWidth: 360, maxWidth: 440)
+                }
+                .frame(minHeight: 520)
+            } else {
+                Text("Loading editor draft...")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, minHeight: 320, alignment: .center)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func editorCanvas(draft: FlowEditorDraft) -> some View {
+        let canvasSize = editorCanvasSize(for: draft)
+        let nodeCenters = Dictionary(uniqueKeysWithValues: draft.nodes.map { ($0.id, $0.center) })
+        let edges = editorEdges(for: draft)
+
+        ScrollView([.horizontal, .vertical]) {
+            ZStack(alignment: .topLeading) {
+                Rectangle()
+                    .fill(Color(nsColor: .windowBackgroundColor))
+                    .frame(width: canvasSize.width, height: canvasSize.height)
+
+                ForEach(edges) { edge in
+                    editorEdgeView(edge: edge, nodeCenters: nodeCenters)
+                }
+
+                ForEach(draft.nodes) { node in
+                    editorNodeCard(node: node, isSelected: node.id == draft.selectedNodeID)
+                        .position(node.center)
+                }
+            }
+            .frame(width: canvasSize.width, height: canvasSize.height)
+        }
+        .background(Color(nsColor: .controlBackgroundColor))
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+    }
+
+    @ViewBuilder
+    private func editorEdgeView(edge: FlowEditorCanvasEdge, nodeCenters: [String: CGPoint]) -> some View {
+        let from = nodeCenters[edge.fromID] ?? .zero
+        let to = nodeCenters[edge.toID] ?? CGPoint(x: from.x + 180, y: from.y)
+        let mid = CGPoint(x: (from.x + to.x) / 2, y: (from.y + to.y) / 2)
+        let strokeColor: Color = edge.isBroken ? .red : .secondary
+        let dash: [CGFloat] = edge.isBroken ? [6, 5] : []
+
+        Path { path in
+            path.move(to: from)
+            let control1 = CGPoint(x: from.x + 65, y: from.y)
+            let control2 = CGPoint(x: to.x - 65, y: to.y)
+            path.addCurve(to: to, control1: control1, control2: control2)
+        }
+        .stroke(strokeColor.opacity(0.75), style: StrokeStyle(lineWidth: 1.8, dash: dash))
+
+        Text(edge.label)
+            .font(.caption2.monospaced())
+            .padding(.horizontal, 5)
+            .padding(.vertical, 2)
+            .background(Color(nsColor: .textBackgroundColor), in: Capsule())
+            .foregroundStyle(strokeColor)
+            .position(mid)
+    }
+
+    @ViewBuilder
+    private func editorNodeCard(node: FlowEditorNodeDraft, isSelected: Bool) -> some View {
+        VStack(alignment: .leading, spacing: 5) {
+            HStack {
+                Text(node.state.id)
+                    .font(.caption.weight(.semibold))
+                    .lineLimit(1)
+                Spacer(minLength: 4)
+                Text(node.state.type.rawValue)
+                    .font(.caption2.monospaced())
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 1)
+                    .background(stateTypeColor(node.state.type.rawValue).opacity(0.15), in: Capsule())
+            }
+            Text(editorNodeSummary(node.state))
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .lineLimit(3)
+        }
+        .padding(10)
+        .frame(width: 200, height: 94)
+        .background(
+            RoundedRectangle(cornerRadius: 10)
+                .fill(Color(nsColor: .textBackgroundColor))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 10)
+                .stroke(isSelected ? Color.accentColor : Color.secondary.opacity(0.35), lineWidth: isSelected ? 2 : 1)
+        )
+        .shadow(color: Color.black.opacity(0.08), radius: 3, x: 0, y: 1)
+        .onTapGesture {
+            selectEditorNode(node.id)
+        }
+        .gesture(
+            DragGesture(minimumDistance: 1)
+                .onChanged { value in
+                    handleNodeDragChanged(nodeID: node.id, translation: value.translation)
+                }
+                .onEnded { value in
+                    handleNodeDragEnded(nodeID: node.id, translation: value.translation)
+                }
+        )
+    }
+
+    @ViewBuilder
+    private func editorInspector(draft: FlowEditorDraft) -> some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 12) {
+                GroupBox("Flow") {
+                    VStack(alignment: .leading, spacing: 10) {
+                        targetPicker(
+                            title: "start",
+                            selection: draft.start,
+                            candidates: draft.nodes.map(\.id),
+                            required: true
+                        ) { value in
+                            guard let value else { return }
+                            mutateEditorDraft { edited in
+                                edited.start = value
+                            }
+                        }
+
+                        Stepper(value: Binding(
+                            get: { draft.defaults.maxAgentRounds },
+                            set: { value in
+                                mutateEditorDraft { edited in
+                                    edited.defaults.maxAgentRounds = max(value, 1)
+                                }
+                            }
+                        ), in: 1...10000) {
+                            Text("max_agent_rounds: \(draft.defaults.maxAgentRounds)")
+                                .font(.caption.monospacedDigit())
+                        }
+
+                        Stepper(value: Binding(
+                            get: { draft.defaults.maxWaitCycles },
+                            set: { value in
+                                mutateEditorDraft { edited in
+                                    edited.defaults.maxWaitCycles = max(value, 1)
+                                }
+                            }
+                        ), in: 1...100000) {
+                            Text("max_wait_cycles: \(draft.defaults.maxWaitCycles)")
+                                .font(.caption.monospacedDigit())
+                        }
+
+                        Stepper(value: Binding(
+                            get: { draft.defaults.maxTotalSteps },
+                            set: { value in
+                                mutateEditorDraft { edited in
+                                    edited.defaults.maxTotalSteps = max(value, 1)
+                                }
+                            }
+                        ), in: 1...100000) {
+                            Text("max_total_steps: \(draft.defaults.maxTotalSteps)")
+                                .font(.caption.monospacedDigit())
+                        }
+
+                        Stepper(value: Binding(
+                            get: { draft.defaults.stepTimeoutSec },
+                            set: { value in
+                                mutateEditorDraft { edited in
+                                    edited.defaults.stepTimeoutSec = max(value, 1)
+                                }
+                            }
+                        ), in: 1...100000) {
+                            Text("step_timeout_sec: \(draft.defaults.stepTimeoutSec)")
+                                .font(.caption.monospacedDigit())
+                        }
+
+                        Toggle("fail_on_parse_error", isOn: Binding(
+                            get: { draft.defaults.failOnParseError },
+                            set: { value in
+                                mutateEditorDraft { edited in
+                                    edited.defaults.failOnParseError = value
+                                }
+                            }
+                        ))
+                        .font(.caption)
+                    }
+                    .padding(8)
+                }
+
+                GroupBox("Node") {
+                    if let node = selectedEditorNode {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text(node.state.id)
+                                .font(.caption.weight(.semibold))
+                            Text(node.state.type.rawValue)
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                            selectedNodeInspectorFields(node: node, candidates: draft.nodes.map(\.id))
+                        }
+                        .padding(8)
+                    } else {
+                        Text("Select a node from canvas.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .padding(8)
+                    }
+                }
+            }
+            .padding(.horizontal, 6)
+            .padding(.vertical, 2)
+        }
+    }
+
+    @ViewBuilder
+    private func selectedNodeInspectorFields(node: FlowEditorNodeDraft, candidates: [String]) -> some View {
+        switch node.state.type {
+        case .gate:
+            TextField("run", text: Binding(
+                get: { selectedEditorNode?.state.run ?? "" },
+                set: { value in
+                    updateSelectedNodeState { state in
+                        state.run = normalizedOptional(value)
+                    }
+                }
+            ))
+            targetPicker(title: "on.pass", selection: node.state.on?.pass, candidates: candidates, required: true) { value in
+                updateSelectedNodeState { state in
+                    var transitions = state.on ?? FlowGateTransitions(pass: "", needsAgent: "", wait: "", fail: "")
+                    transitions.pass = value ?? state.id
+                    state.on = transitions
+                }
+            }
+            targetPicker(title: "on.needs_agent", selection: node.state.on?.needsAgent, candidates: candidates, required: true) { value in
+                updateSelectedNodeState { state in
+                    var transitions = state.on ?? FlowGateTransitions(pass: "", needsAgent: "", wait: "", fail: "")
+                    transitions.needsAgent = value ?? state.id
+                    state.on = transitions
+                }
+            }
+            targetPicker(title: "on.wait", selection: node.state.on?.wait, candidates: candidates, required: true) { value in
+                updateSelectedNodeState { state in
+                    var transitions = state.on ?? FlowGateTransitions(pass: "", needsAgent: "", wait: "", fail: "")
+                    transitions.wait = value ?? state.id
+                    state.on = transitions
+                }
+            }
+            targetPicker(title: "on.fail", selection: node.state.on?.fail, candidates: candidates, required: true) { value in
+                updateSelectedNodeState { state in
+                    var transitions = state.on ?? FlowGateTransitions(pass: "", needsAgent: "", wait: "", fail: "")
+                    transitions.fail = value ?? state.id
+                    state.on = transitions
+                }
+            }
+            targetPicker(title: "on.parse_error", selection: node.state.on?.parseError, candidates: candidates, required: false) { value in
+                updateSelectedNodeState { state in
+                    var transitions = state.on ?? FlowGateTransitions(pass: "", needsAgent: "", wait: "", fail: "")
+                    transitions.parseError = value
+                    state.on = transitions
+                }
+            }
+        case .agent:
+            TextField("task", text: Binding(
+                get: { selectedEditorNode?.state.task ?? "" },
+                set: { value in
+                    updateSelectedNodeState { state in
+                        state.task = normalizedOptional(value)
+                    }
+                }
+            ))
+            TextField("model", text: Binding(
+                get: { selectedEditorNode?.state.model ?? "" },
+                set: { value in
+                    updateSelectedNodeState { state in
+                        state.model = normalizedOptional(value)
+                    }
+                }
+            ))
+            TextField("counter", text: Binding(
+                get: { selectedEditorNode?.state.counter ?? "" },
+                set: { value in
+                    updateSelectedNodeState { state in
+                        state.counter = normalizedOptional(value)
+                    }
+                }
+            ))
+            TextField("max_rounds", text: Binding(
+                get: { selectedEditorNode?.state.maxRounds.map(String.init) ?? "" },
+                set: { value in
+                    updateSelectedNodeState { state in
+                        state.maxRounds = Int(value)
+                    }
+                }
+            ))
+            TextField("prompt", text: Binding(
+                get: { selectedEditorNode?.state.prompt ?? "" },
+                set: { value in
+                    updateSelectedNodeState { state in
+                        state.prompt = normalizedOptional(value)
+                    }
+                }
+            ))
+            targetPicker(title: "next", selection: node.state.next, candidates: candidates, required: true) { value in
+                updateSelectedNodeState { state in
+                    state.next = value
+                }
+            }
+        case .wait:
+            targetPicker(title: "next", selection: node.state.next, candidates: candidates, required: true) { value in
+                updateSelectedNodeState { state in
+                    state.next = value
+                }
+            }
+            TextField("seconds", text: Binding(
+                get: { selectedEditorNode?.state.seconds.map(String.init) ?? "" },
+                set: { value in
+                    updateSelectedNodeState { state in
+                        state.seconds = Int(value)
+                    }
+                }
+            ))
+            TextField("seconds_from", text: Binding(
+                get: { selectedEditorNode?.state.secondsFrom ?? "" },
+                set: { value in
+                    updateSelectedNodeState { state in
+                        state.secondsFrom = normalizedOptional(value)
+                    }
+                }
+            ))
+        case .script:
+            TextField("run", text: Binding(
+                get: { selectedEditorNode?.state.run ?? "" },
+                set: { value in
+                    updateSelectedNodeState { state in
+                        state.run = normalizedOptional(value)
+                    }
+                }
+            ))
+            targetPicker(title: "next", selection: node.state.next, candidates: candidates, required: true) { value in
+                updateSelectedNodeState { state in
+                    state.next = value
+                }
+            }
+        case .end:
+            Picker("status", selection: Binding(
+                get: { selectedEditorNode?.state.endStatus ?? .success },
+                set: { value in
+                    updateSelectedNodeState { state in
+                        state.endStatus = value
+                    }
+                }
+            )) {
+                Text("success").tag(FlowEndStatus.success)
+                Text("failure").tag(FlowEndStatus.failure)
+            }
+            .pickerStyle(.segmented)
+
+            TextField("message", text: Binding(
+                get: { selectedEditorNode?.state.message ?? "" },
+                set: { value in
+                    updateSelectedNodeState { state in
+                        state.message = normalizedOptional(value)
+                    }
+                }
+            ))
+        }
+    }
+
+    @ViewBuilder
+    private func targetPicker(
+        title: String,
+        selection: String?,
+        candidates: [String],
+        required: Bool,
+        onChange: @escaping (String?) -> Void
+    ) -> some View {
+        let noneTag = "__none__"
+        Picker(title, selection: Binding(
+            get: {
+                selection ?? noneTag
+            },
+            set: { raw in
+                if raw == noneTag {
+                    onChange(required ? candidates.first : nil)
+                } else {
+                    onChange(raw)
+                }
+            }
+        )) {
+            if !required {
+                Text("—").tag(noneTag)
+            }
+            ForEach(candidates, id: \.self) { id in
+                Text(id).tag(id)
+            }
+        }
     }
 
     @ViewBuilder
@@ -743,6 +1264,517 @@ struct FlowDetailView: View {
                 .padding(8)
             }
         }
+    }
+
+    private var selectedEditorNodeIndex: Int? {
+        guard let draft = editorDraft,
+              let selectedNodeID = draft.selectedNodeID else {
+            return nil
+        }
+        return draft.nodes.firstIndex { $0.id == selectedNodeID }
+    }
+
+    private var selectedEditorNode: FlowEditorNodeDraft? {
+        guard let draft = editorDraft,
+              let index = selectedEditorNodeIndex,
+              draft.nodes.indices.contains(index) else {
+            return nil
+        }
+        return draft.nodes[index]
+    }
+
+    private func loadEditorDraft(for summary: FlowDefinitionStatusSummary) {
+        do {
+            let definition = try FlowYAMLEditorCodec.loadDefinition(
+                atPath: summary.definition.canonicalFlowPath,
+                noFSCheck: true
+            )
+            let layout = loadEditorLayout(forFlowPath: summary.definition.canonicalFlowPath)
+            let centers = layout ?? autoLayoutCenters(for: definition)
+            let nodes = definition.states.map { state in
+                let center = centers[state.id] ?? CGPoint(x: 160, y: 120)
+                return FlowEditorNodeDraft(state: state, center: center)
+            }
+
+            let selectedID = nodes.first(where: { $0.id == definition.start })?.id ?? nodes.first?.id
+            let draft = FlowEditorDraft(
+                definitionID: summary.definition.id,
+                flowPath: summary.definition.canonicalFlowPath,
+                version: definition.version,
+                start: definition.start,
+                defaults: definition.defaults,
+                context: definition.context,
+                nodes: nodes,
+                selectedNodeID: selectedID,
+                isDirty: false
+            )
+            editorDraft = draft
+            resetEditorHistory(with: draft)
+            editorInfoMessage = nil
+            editorErrorMessage = nil
+            dragBaseCenters = [:]
+        } catch {
+            editorDraft = nil
+            editorHistory = []
+            editorHistoryIndex = -1
+            editorErrorMessage = "Failed to load editor draft: \(error.localizedDescription)"
+        }
+    }
+
+    private func resetEditorHistory(with draft: FlowEditorDraft) {
+        editorHistory = [draft]
+        editorHistoryIndex = 0
+    }
+
+    private func pushEditorHistory(_ draft: FlowEditorDraft) {
+        let safeIndex = max(0, min(editorHistoryIndex, editorHistory.count - 1))
+        let base = editorHistory.isEmpty ? [] : Array(editorHistory.prefix(safeIndex + 1))
+        if base.last == draft {
+            return
+        }
+        editorHistory = base + [draft]
+        editorHistoryIndex = editorHistory.count - 1
+    }
+
+    private func mutateEditorDraft(
+        pushHistory: Bool = true,
+        markDirty: Bool = true,
+        _ mutation: (inout FlowEditorDraft) -> Void
+    ) {
+        guard var draft = editorDraft else { return }
+        let before = draft
+        mutation(&draft)
+        guard draft != before else { return }
+        if markDirty {
+            draft.isDirty = true
+        }
+        editorDraft = draft
+        if pushHistory {
+            pushEditorHistory(draft)
+        }
+    }
+
+    private func selectEditorNode(_ nodeID: String) {
+        mutateEditorDraft(pushHistory: false, markDirty: false) { draft in
+            draft.selectedNodeID = nodeID
+        }
+    }
+
+    private func updateSelectedNodeState(_ mutation: (inout FlowStateDefinition) -> Void) {
+        mutateEditorDraft { draft in
+            guard let selectedNodeID = draft.selectedNodeID,
+                  let index = draft.nodes.firstIndex(where: { $0.id == selectedNodeID }) else {
+                return
+            }
+            mutation(&draft.nodes[index].state)
+        }
+    }
+
+    private func addEditorNode(type: FlowStateType) {
+        mutateEditorDraft { draft in
+            let existingIDs = Set(draft.nodes.map(\.id))
+            let newID = nextEditorStateID(base: type.rawValue, existingIDs: existingIDs)
+            let fallbackTarget = draft.start.isEmpty ? draft.nodes.first?.id : draft.start
+            let state = defaultState(
+                type: type,
+                id: newID,
+                fallbackTarget: fallbackTarget
+            )
+            let maxX = draft.nodes.map { $0.center.x }.max() ?? 120
+            let ySeed = draft.nodes.count % 5
+            let center = CGPoint(x: maxX + 250, y: 120 + CGFloat(ySeed) * 140)
+            draft.nodes.append(FlowEditorNodeDraft(state: state, center: center))
+            draft.selectedNodeID = newID
+            if draft.start.isEmpty {
+                draft.start = newID
+            }
+        }
+    }
+
+    private func deleteSelectedEditorNode() {
+        guard let selectedNode = selectedEditorNode else { return }
+        guard let draft = editorDraft, draft.nodes.count > 1 else {
+            editorErrorMessage = "Flow must contain at least one state."
+            return
+        }
+
+        mutateEditorDraft { edited in
+            guard let removeIndex = edited.nodes.firstIndex(where: { $0.id == selectedNode.id }) else {
+                return
+            }
+            edited.nodes.remove(at: removeIndex)
+            let replacementID = edited.nodes.first?.id ?? ""
+            if edited.start == selectedNode.id {
+                edited.start = replacementID
+            }
+            for index in edited.nodes.indices {
+                if edited.nodes[index].state.next == selectedNode.id {
+                    edited.nodes[index].state.next = replacementID
+                }
+                if var on = edited.nodes[index].state.on {
+                    if on.pass == selectedNode.id { on.pass = replacementID }
+                    if on.needsAgent == selectedNode.id { on.needsAgent = replacementID }
+                    if on.wait == selectedNode.id { on.wait = replacementID }
+                    if on.fail == selectedNode.id { on.fail = replacementID }
+                    if on.parseError == selectedNode.id { on.parseError = replacementID }
+                    edited.nodes[index].state.on = on
+                }
+            }
+            edited.selectedNodeID = replacementID
+        }
+    }
+
+    private func autoLayoutEditorNodes() {
+        mutateEditorDraft { draft in
+            let definition = flowDefinition(from: draft)
+            let centers = autoLayoutCenters(for: definition)
+            for index in draft.nodes.indices {
+                let id = draft.nodes[index].id
+                if let center = centers[id] {
+                    draft.nodes[index].center = center
+                }
+            }
+        }
+    }
+
+    private func undoEditor() {
+        guard editorHistoryIndex > 0 else { return }
+        editorHistoryIndex -= 1
+        editorDraft = editorHistory[editorHistoryIndex]
+        dragBaseCenters = [:]
+    }
+
+    private func redoEditor() {
+        guard editorHistoryIndex >= 0,
+              editorHistoryIndex < editorHistory.count - 1 else { return }
+        editorHistoryIndex += 1
+        editorDraft = editorHistory[editorHistoryIndex]
+        dragBaseCenters = [:]
+    }
+
+    private func validateEditorDraft() {
+        guard let draft = editorDraft else { return }
+        do {
+            _ = try FlowYAMLEditorCodec.validate(
+                definition: flowDefinition(from: draft),
+                noFSCheck: true
+            )
+            editorInfoMessage = "Draft is valid (no-fs-check)."
+            editorErrorMessage = nil
+        } catch {
+            editorErrorMessage = "Draft validation failed: \(error.localizedDescription)"
+            editorInfoMessage = nil
+        }
+    }
+
+    private func saveEditorDraft() async {
+        guard var draft = editorDraft else { return }
+        do {
+            let definition = flowDefinition(from: draft)
+            _ = try FlowYAMLEditorCodec.validate(definition: definition, noFSCheck: true)
+            let yaml = try FlowYAMLEditorCodec.render(definition: definition)
+
+            let fileURL = URL(fileURLWithPath: draft.flowPath)
+            let fileManager = FileManager.default
+            let timestamp = ISO8601DateFormatter().string(from: Date()).replacingOccurrences(of: ":", with: "-")
+            let backupURL = fileURL.deletingLastPathComponent()
+                .appendingPathComponent("\(fileURL.lastPathComponent).bak-\(timestamp)")
+            let tempURL = fileURL.deletingLastPathComponent()
+                .appendingPathComponent("\(fileURL.lastPathComponent).tmp")
+
+            try fileManager.copyItem(at: fileURL, to: backupURL)
+            try yaml.write(to: tempURL, atomically: true, encoding: .utf8)
+            if fileManager.fileExists(atPath: fileURL.path) {
+                try fileManager.removeItem(at: fileURL)
+            }
+            try fileManager.moveItem(at: tempURL, to: fileURL)
+
+            do {
+                _ = try FlowValidator.validateFile(
+                    atPath: fileURL.path,
+                    options: .init(checkFileSystem: false)
+                )
+            } catch {
+                if fileManager.fileExists(atPath: fileURL.path) {
+                    try? fileManager.removeItem(at: fileURL)
+                }
+                try? fileManager.copyItem(at: backupURL, to: fileURL)
+                throw error
+            }
+
+            try saveEditorLayout(for: draft)
+            draft.isDirty = false
+            editorDraft = draft
+            pushEditorHistory(draft)
+            editorInfoMessage = "Saved \(fileURL.lastPathComponent)."
+            editorErrorMessage = nil
+
+            await appState.loadFlows()
+            await appState.selectFlowDefinition(draft.definitionID)
+        } catch {
+            editorErrorMessage = "Save failed: \(error.localizedDescription)"
+            editorInfoMessage = nil
+        }
+    }
+
+    private func handleNodeDragChanged(nodeID: String, translation: CGSize) {
+        guard let draft = editorDraft,
+              let nodeIndex = draft.nodes.firstIndex(where: { $0.id == nodeID }) else {
+            return
+        }
+        let base = dragBaseCenters[nodeID] ?? draft.nodes[nodeIndex].center
+        if dragBaseCenters[nodeID] == nil {
+            dragBaseCenters[nodeID] = base
+        }
+        let proposed = CGPoint(x: base.x + translation.width, y: base.y + translation.height)
+        let clamped = CGPoint(x: max(proposed.x, 120), y: max(proposed.y, 80))
+        mutateEditorDraft(pushHistory: false, markDirty: false) { edited in
+            guard let index = edited.nodes.firstIndex(where: { $0.id == nodeID }) else { return }
+            edited.nodes[index].center = clamped
+            edited.selectedNodeID = nodeID
+        }
+    }
+
+    private func handleNodeDragEnded(nodeID: String, translation: CGSize) {
+        guard let base = dragBaseCenters.removeValue(forKey: nodeID) else { return }
+        let proposed = CGPoint(x: base.x + translation.width, y: base.y + translation.height)
+        let clamped = CGPoint(x: max(proposed.x, 120), y: max(proposed.y, 80))
+        mutateEditorDraft(pushHistory: true, markDirty: true) { edited in
+            guard let index = edited.nodes.firstIndex(where: { $0.id == nodeID }) else { return }
+            edited.nodes[index].center = clamped
+            edited.selectedNodeID = nodeID
+        }
+    }
+
+    private func editorEdges(for draft: FlowEditorDraft) -> [FlowEditorCanvasEdge] {
+        let ids = Set(draft.nodes.map(\.id))
+        var edges: [FlowEditorCanvasEdge] = []
+        for node in draft.nodes {
+            switch node.state.type {
+            case .gate:
+                if let on = node.state.on {
+                    edges.append(
+                        FlowEditorCanvasEdge(
+                            fromID: node.id,
+                            toID: on.pass,
+                            label: "pass",
+                            isBroken: !ids.contains(on.pass)
+                        )
+                    )
+                    edges.append(
+                        FlowEditorCanvasEdge(
+                            fromID: node.id,
+                            toID: on.needsAgent,
+                            label: "needs_agent",
+                            isBroken: !ids.contains(on.needsAgent)
+                        )
+                    )
+                    edges.append(
+                        FlowEditorCanvasEdge(
+                            fromID: node.id,
+                            toID: on.wait,
+                            label: "wait",
+                            isBroken: !ids.contains(on.wait)
+                        )
+                    )
+                    edges.append(
+                        FlowEditorCanvasEdge(
+                            fromID: node.id,
+                            toID: on.fail,
+                            label: "fail",
+                            isBroken: !ids.contains(on.fail)
+                        )
+                    )
+                    if let parseError = on.parseError {
+                        edges.append(
+                            FlowEditorCanvasEdge(
+                                fromID: node.id,
+                                toID: parseError,
+                                label: "parse_error",
+                                isBroken: !ids.contains(parseError)
+                            )
+                        )
+                    }
+                }
+            case .agent, .wait, .script:
+                if let next = node.state.next {
+                    edges.append(
+                        FlowEditorCanvasEdge(
+                            fromID: node.id,
+                            toID: next,
+                            label: "next",
+                            isBroken: !ids.contains(next)
+                        )
+                    )
+                }
+            case .end:
+                break
+            }
+        }
+        return edges
+    }
+
+    private func editorCanvasSize(for draft: FlowEditorDraft) -> CGSize {
+        let maxX = max(draft.nodes.map { $0.center.x }.max() ?? 0, 1000)
+        let maxY = max(draft.nodes.map { $0.center.y }.max() ?? 0, 700)
+        return CGSize(width: maxX + 320, height: maxY + 260)
+    }
+
+    private func editorNodeSummary(_ state: FlowStateDefinition) -> String {
+        switch state.type {
+        case .gate:
+            return "run=\(state.run ?? "—")"
+        case .agent:
+            return "task=\(state.task ?? "—") counter=\(state.counter ?? "—")"
+        case .wait:
+            if let seconds = state.seconds {
+                return "seconds=\(seconds)"
+            }
+            if let secondsFrom = state.secondsFrom {
+                return "seconds_from=\(secondsFrom)"
+            }
+            return "wait"
+        case .script:
+            return "run=\(state.run ?? "—")"
+        case .end:
+            return "status=\(state.endStatus?.rawValue ?? "success")"
+        }
+    }
+
+    private func flowDefinition(from draft: FlowEditorDraft) -> FlowYAMLDefinition {
+        let fallbackStart = draft.nodes.first?.id ?? draft.start
+        let validStart = draft.nodes.contains(where: { $0.id == draft.start }) ? draft.start : fallbackStart
+        return FlowYAMLDefinition(
+            version: draft.version,
+            start: validStart,
+            defaults: draft.defaults,
+            context: draft.context,
+            states: draft.nodes.map(\.state)
+        )
+    }
+
+    private func sidecarLayoutPath(for flowPath: String) -> String {
+        "\(flowPath).layout.json"
+    }
+
+    private func loadEditorLayout(forFlowPath flowPath: String) -> [String: CGPoint]? {
+        let path = sidecarLayoutPath(for: flowPath)
+        guard FileManager.default.fileExists(atPath: path),
+              let data = try? Data(contentsOf: URL(fileURLWithPath: path)),
+              let decoded = try? JSONDecoder().decode(FlowEditorLayoutFile.self, from: data) else {
+            return nil
+        }
+        return decoded.nodes.mapValues {
+            CGPoint(x: $0.x, y: $0.y)
+        }
+    }
+
+    private func saveEditorLayout(for draft: FlowEditorDraft) throws {
+        let path = sidecarLayoutPath(for: draft.flowPath)
+        let nodes = Dictionary(uniqueKeysWithValues: draft.nodes.map { node in
+            (node.id, FlowEditorPoint(x: node.center.x, y: node.center.y))
+        })
+        let payload = FlowEditorLayoutFile(nodes: nodes)
+        let data = try JSONEncoder().encode(payload)
+        try data.write(to: URL(fileURLWithPath: path), options: [.atomic])
+    }
+
+    private func autoLayoutCenters(for definition: FlowYAMLDefinition) -> [String: CGPoint] {
+        let stateMap = Dictionary(uniqueKeysWithValues: definition.states.map { ($0.id, $0) })
+        var depth: [String: Int] = [definition.start: 0]
+        var queue: [String] = [definition.start]
+
+        func targets(for state: FlowStateDefinition) -> [String] {
+            switch state.type {
+            case .gate:
+                guard let on = state.on else { return [] }
+                return [on.pass, on.needsAgent, on.wait, on.fail] + (on.parseError.map { [$0] } ?? [])
+            case .agent, .wait, .script:
+                return state.next.map { [$0] } ?? []
+            case .end:
+                return []
+            }
+        }
+
+        while !queue.isEmpty {
+            let current = queue.removeFirst()
+            guard let state = stateMap[current] else { continue }
+            let currentDepth = depth[current, default: 0]
+            for target in targets(for: state) where depth[target] == nil {
+                depth[target] = currentDepth + 1
+                queue.append(target)
+            }
+        }
+
+        var grouped: [Int: [String]] = [:]
+        for state in definition.states {
+            let rank = depth[state.id] ?? (depth.values.max() ?? 0) + 1
+            grouped[rank, default: []].append(state.id)
+        }
+
+        var centers: [String: CGPoint] = [:]
+        for rank in grouped.keys.sorted() {
+            let ids = grouped[rank, default: []]
+            for (index, id) in ids.enumerated() {
+                centers[id] = CGPoint(
+                    x: 160 + CGFloat(rank) * 260,
+                    y: 120 + CGFloat(index) * 140
+                )
+            }
+        }
+        return centers
+    }
+
+    private func defaultState(
+        type: FlowStateType,
+        id: String,
+        fallbackTarget: String?
+    ) -> FlowStateDefinition {
+        let target = fallbackTarget ?? id
+        var state = FlowStateDefinition(id: id, type: type)
+        switch type {
+        case .gate:
+            state.run = "./gate.sh"
+            state.on = FlowGateTransitions(
+                pass: target,
+                needsAgent: target,
+                wait: target,
+                fail: target,
+                parseError: nil
+            )
+            state.parseMode = .jsonLastLine
+        case .agent:
+            state.task = "TODO: describe task"
+            state.next = target
+            state.counter = "agent_round"
+            state.maxRounds = 3
+        case .wait:
+            state.next = target
+            state.seconds = 5
+        case .script:
+            state.run = "./script.sh"
+            state.next = target
+        case .end:
+            state.endStatus = .success
+        }
+        return state
+    }
+
+    private func nextEditorStateID(base: String, existingIDs: Set<String>) -> String {
+        let sanitized = base.replacingOccurrences(of: "_", with: "-")
+        if !existingIDs.contains(sanitized) {
+            return sanitized
+        }
+        var index = 2
+        while existingIDs.contains("\(sanitized)-\(index)") {
+            index += 1
+        }
+        return "\(sanitized)-\(index)"
+    }
+
+    private func normalizedOptional(_ raw: String) -> String? {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
     }
 
     private func uiActionLabel(_ action: FlowCommandQueueAction) -> String {
