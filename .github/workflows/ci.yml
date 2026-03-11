@@ -28,5 +28,10 @@ jobs:
       - name: Run full test suite
         run: swift test
 
+      - name: Verify Flow TC mapping is up to date
+        run: |
+          scripts/generate-flow-tc-mapping.sh
+          git diff --exit-code -- docs/flow-tc-mapping.md
+
       - name: Run run+agent E2E test only
         run: swift test --filter ScriptoriaCoreTests.ScriptoriaCLITests/testRunCommandAgentStage

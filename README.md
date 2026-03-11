@@ -24,6 +24,8 @@ A full-featured command-line tool for terminal workflows and automation:
 scriptoria add ./backup.sh --title "Backup" --task-name "Daily Backup" --default-model gpt-5.3-codex --tags "daily,infra"
 scriptoria list --tag daily
 scriptoria run "Backup" --model gpt-5.3-codex --no-steer
+scriptoria flow validate ./flows/pr-check.yaml
+scriptoria flow run ./flows/pr-check.yaml --var repo=org/repo --command "/interrupt"
 scriptoria schedule add "Backup" --daily 09:00
 scriptoria search "deploy"
 scriptoria tags
@@ -35,6 +37,7 @@ scriptoria config show
 | `add <path>` | Register a script (title/description/interpreter/tags/agent task/model defaults) |
 | `list` | List scripts (filter by `--tag`, `--favorites`, `--recent`) |
 | `run <title-or-id>` | Execute a script, optional post-script agent stage (`--model`, `--agent-prompt`, `--command`, `--skip-agent`) |
+| `flow validate/compile/run/dry-run` | Validate, compile, execute, and fixture-drive Flow DSL (`flow/v1`) |
 | `search <query>` | Search by title, description, or tags |
 | `remove <title-or-id>` | Remove a script from the database |
 | `tags` | List all tags with script counts |
@@ -43,6 +46,34 @@ scriptoria config show
 | `schedule enable/disable/remove` | Manage existing schedules |
 | `config show` | Show current configuration |
 | `config set-dir <path>` | Change data directory |
+
+### Flow DSL (`flow/v1`)
+
+Scriptoria supports state-machine automation flows for gate/agent/wait/script loops.
+
+```bash
+# 1) Validate YAML
+scriptoria flow validate ./flows/pr-check.yaml
+
+# 2) Compile to canonical IR JSON
+scriptoria flow compile ./flows/pr-check.yaml --out ./build/pr-check.flow.json
+
+# 3) Execute with context overrides and command queue
+scriptoria flow run ./flows/pr-check.yaml \
+  --var repo=org/repo \
+  --max-agent-rounds 10 \
+  --command "Please focus only on flaky tests"
+
+# 4) Execute deterministic dry-run with fixture data
+scriptoria flow dry-run ./flows/pr-check.yaml --fixture ./fixtures/pr-check.fixture.json
+```
+
+Flow docs:
+
+- [Flow DSL v1 Guide](docs/flow-dsl-v1.md)
+- [Flow v1 Migration Notes](docs/flow-migration-v1.md)
+- [Flow v1 Examples](docs/examples/flow-v1/README.md)
+- [Flow TC Mapping](docs/flow-tc-mapping.md)
 
 ### AI Agent Friendly
 

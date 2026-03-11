@@ -1,0 +1,72 @@
+version: flow/v1
+start: precheck
+defaults:
+  max_agent_rounds: 20
+  max_wait_cycles: 200
+  max_total_steps: 2000
+  step_timeout_sec: 1800
+  fail_on_parse_error: false
+context:
+  pr_url: null
+  repo: "org/repo"
+states:
+  - id: precheck
+    type: gate
+    run: ./scripts/check-eslint-issues.sh
+    parse: json_last_line
+    on:
+      pass: done
+      needs_agent: fix
+      wait: pre_wait
+      fail: done_fail
+      parse_error: done_fail
+
+  - id: pre_wait
+    type: wait
+    seconds: 30
+    next: precheck
+
+  - id: fix
+    type: agent
+    task: fix-eslint-and-open-pr
+    model: gpt-5.3-codex
+    counter: fix_round
+    max_rounds: 20
+    prompt: |
+      Fix eslint issues only.
+      If code changes are needed, commit and open/update pull request.
+      Return final structured JSON with at least:
+      {"pr_url":"...", "summary":"..."}
+    export:
+      pr_url: "$.current.final.pr_url"
+      fix_summary: "$.current.final.summary"
+    next: postcheck
+
+  - id: postcheck
+    type: gate
+    run: ./scripts/check-pr-ci-review.sh
+    parse: json_last_line
+    args:
+      - "$.context.pr_url"
+      - "$.context.repo"
+    on:
+      pass: done
+      needs_agent: fix
+      wait: post_wait
+      fail: done_fail
+      parse_error: done_fail
+
+  - id: post_wait
+    type: wait
+    seconds_from: "$.state.postcheck.last.retry_after_sec"
+    next: postcheck
+
+  - id: done
+    type: end
+    status: success
+    message: "CI all green and no blocking code review comments."
+
+  - id: done_fail
+    type: end
+    status: failure
+    message: "Business-level failure branch."

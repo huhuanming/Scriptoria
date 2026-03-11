@@ -1,0 +1,42 @@
+version: flow/v1
+start: precheck
+defaults:
+  max_agent_rounds: 20
+  max_wait_cycles: 50
+  max_total_steps: 200
+  step_timeout_sec: 60
+  fail_on_parse_error: true
+context:
+  summary: ""
+states:
+  - id: precheck
+    type: gate
+    run: ./scripts/precheck.sh
+    parse: json_last_line
+    on:
+      pass: collect
+      needs_agent: done_fail
+      wait: hold
+      fail: done_fail
+
+  - id: hold
+    type: wait
+    seconds: 0
+    next: precheck
+
+  - id: collect
+    type: script
+    run: ./scripts/collect-summary.sh
+    export:
+      summary: "$.current.final.summary"
+    next: done
+
+  - id: done
+    type: end
+    status: success
+    message: "Local sample completed."
+
+  - id: done_fail
+    type: end
+    status: failure
+    message: "Local sample failed."
