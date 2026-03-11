@@ -5,6 +5,7 @@ PROJECT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 APP_NAME="Scriptoria"
 SCHEME="Scriptoria"
 BUILD_DIR="${PROJECT_DIR}/.build/app"
+SOURCE_PACKAGES_DIR="${PROJECT_DIR}/.build/source-packages"
 DESTINATION="/Applications/${APP_NAME}.app"
 
 echo "=============================="
@@ -23,11 +24,23 @@ echo "  CLI: ${CLI_BIN}"
 
 # Step 2: Build the App (clean first to ensure latest code)
 echo ""
+echo "→ Resolving Swift packages..."
+mkdir -p "${SOURCE_PACKAGES_DIR}"
+xcodebuild \
+    -resolvePackageDependencies \
+    -project "${PROJECT_DIR}/${APP_NAME}.xcodeproj" \
+    -scheme "${SCHEME}" \
+    -clonedSourcePackagesDirPath "${SOURCE_PACKAGES_DIR}" \
+    -disableAutomaticPackageResolution
+
+echo ""
 echo "→ Cleaning previous build..."
 xcodebuild \
     -project "${PROJECT_DIR}/${APP_NAME}.xcodeproj" \
     -scheme "${SCHEME}" \
     -configuration Release \
+    -clonedSourcePackagesDirPath "${SOURCE_PACKAGES_DIR}" \
+    -disableAutomaticPackageResolution \
     -derivedDataPath "${BUILD_DIR}" \
     clean 2>&1 | tail -1
 
@@ -37,6 +50,8 @@ xcodebuild \
     -scheme "${SCHEME}" \
     -configuration Release \
     -derivedDataPath "${BUILD_DIR}" \
+    -clonedSourcePackagesDirPath "${SOURCE_PACKAGES_DIR}" \
+    -disableAutomaticPackageResolution \
     -destination 'platform=macOS' \
     CODE_SIGN_IDENTITY="-" \
     CODE_SIGNING_ALLOWED=YES \

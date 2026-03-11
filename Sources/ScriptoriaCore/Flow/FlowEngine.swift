@@ -10,22 +10,29 @@ public struct FlowRunOptions: Sendable {
     public var maxAgentRoundsCap: Int?
     public var noSteer: Bool
     public var commands: [String]
+    public var runID: String?
+    public var flowDefinitionID: String?
 
     public init(
         contextOverrides: [String: String] = [:],
         maxAgentRoundsCap: Int? = nil,
         noSteer: Bool = false,
-        commands: [String] = []
+        commands: [String] = [],
+        runID: String? = nil,
+        flowDefinitionID: String? = nil
     ) {
         self.contextOverrides = contextOverrides
         self.maxAgentRoundsCap = maxAgentRoundsCap
         self.noSteer = noSteer
         self.commands = commands
+        self.runID = runID
+        self.flowDefinitionID = flowDefinitionID
     }
 }
 
-public enum FlowRunStatus: String, Sendable {
+public enum FlowRunStatus: String, Sendable, Codable {
     case success
+    case failure
 }
 
 public struct FlowRunResult: Sendable {
@@ -55,24 +62,83 @@ private struct FlowStepOutcome {
     var stateOutput: FlowValue?
 }
 
+private struct FlowRuntimeMetadata {
+    var provider: String?
+    var model: String?
+    var executablePath: String?
+    var executableSource: String?
+}
+
 actor FlowCommandQueue {
     private var items: [String]
+    private let runID: String
+    private let eventSink: (@Sendable (FlowCommandQueueChangedEvent) -> Void)?
+    private var nextEventSeq: Int = 1
 
-    init(items: [String]) {
+    init(
+        items: [String],
+        runID: String,
+        eventSink: (@Sendable (FlowCommandQueueChangedEvent) -> Void)?
+    ) {
         self.items = items
+        self.runID = runID
+        self.eventSink = eventSink
+        if let eventSink {
+            for (index, raw) in items.enumerated() {
+                let event = FlowCommandQueueChangedEvent(
+                    runID: runID,
+                    seq: nextEventSeq,
+                    action: .queued,
+                    commandPreview: Self.commandPreview(from: raw),
+                    queueDepth: index + 1,
+                    stateID: nil,
+                    turnID: nil,
+                    reason: nil
+                )
+                nextEventSeq += 1
+                eventSink(event)
+            }
+        }
     }
 
-    func append(_ raw: String) {
+    func append(_ raw: String, stateID: String? = nil) {
         items.append(raw)
+        emit(
+            action: .queued,
+            commandPreview: Self.commandPreview(from: raw),
+            queueDepth: items.count,
+            stateID: stateID,
+            turnID: nil,
+            reason: nil
+        )
     }
 
-    func consume(for session: PostScriptAgentSession) async -> Bool {
+    func consume(for session: PostScriptAgentSession, stateID: String?) async -> Bool {
         var sentInterrupt = false
 
         while !items.isEmpty {
             let raw = items[0]
+            let preview = Self.commandPreview(from: raw)
+            let turnID = await session.turnId.nilIfEmpty
+            emit(
+                action: .dispatchAttempt,
+                commandPreview: preview,
+                queueDepth: items.count,
+                stateID: stateID,
+                turnID: turnID,
+                reason: nil
+            )
+
             guard let command = AgentCommandInput.parseCLI(raw) else {
                 items.removeFirst()
+                emit(
+                    action: .consumed,
+                    commandPreview: preview,
+                    queueDepth: items.count,
+                    stateID: stateID,
+                    turnID: turnID,
+                    reason: "invalid_command"
+                )
                 continue
             }
 
@@ -80,16 +146,56 @@ actor FlowCommandQueue {
                 switch command {
                 case .steer(let text):
                     try await session.steer(text)
+                    emit(
+                        action: .accepted,
+                        commandPreview: preview,
+                        queueDepth: items.count,
+                        stateID: stateID,
+                        turnID: turnID,
+                        reason: nil
+                    )
                     items.removeFirst()
+                    emit(
+                        action: .consumed,
+                        commandPreview: preview,
+                        queueDepth: items.count,
+                        stateID: stateID,
+                        turnID: turnID,
+                        reason: nil
+                    )
                 case .interrupt:
                     try await session.interrupt()
+                    emit(
+                        action: .accepted,
+                        commandPreview: preview,
+                        queueDepth: items.count,
+                        stateID: stateID,
+                        turnID: turnID,
+                        reason: nil
+                    )
                     items.removeFirst()
+                    emit(
+                        action: .consumed,
+                        commandPreview: preview,
+                        queueDepth: items.count,
+                        stateID: stateID,
+                        turnID: turnID,
+                        reason: nil
+                    )
                     sentInterrupt = true
                     return sentInterrupt
                 }
             } catch {
                 // Command was not accepted by the current turn; keep it at queue head
                 // and retry when the next agent turn is active.
+                emit(
+                    action: .rejectedRetry,
+                    commandPreview: preview,
+                    queueDepth: items.count,
+                    stateID: stateID,
+                    turnID: turnID,
+                    reason: Self.sanitize(error.localizedDescription)
+                )
                 break
             }
         }
@@ -99,6 +205,45 @@ actor FlowCommandQueue {
 
     func remainingCount() -> Int {
         items.count
+    }
+
+    func remainingCommands() -> [String] {
+        items
+    }
+
+    private func emit(
+        action: FlowCommandQueueAction,
+        commandPreview: String,
+        queueDepth: Int,
+        stateID: String?,
+        turnID: String?,
+        reason: String?
+    ) {
+        guard let eventSink else { return }
+        let event = FlowCommandQueueChangedEvent(
+            runID: runID,
+            seq: nextEventSeq,
+            action: action,
+            commandPreview: commandPreview,
+            queueDepth: queueDepth,
+            stateID: stateID,
+            turnID: turnID,
+            reason: reason
+        )
+        nextEventSeq += 1
+        eventSink(event)
+    }
+
+    private static func commandPreview(from raw: String) -> String {
+        let sanitized = sanitize(raw)
+        if sanitized.count <= 120 {
+            return sanitized
+        }
+        return String(sanitized.prefix(120))
+    }
+
+    private static func sanitize(_ value: String) -> String {
+        value.trimmingCharacters(in: .whitespacesAndNewlines).replacingOccurrences(of: "\n", with: " ")
     }
 }
 
@@ -114,10 +259,35 @@ public final class FlowEngine: Sendable {
         mode: FlowRunMode,
         options: FlowRunOptions = .init(),
         commandInput: AsyncStream<String>? = nil,
-        logSink: ((String) -> Void)? = nil
+        logSink: (@Sendable (String) -> Void)? = nil,
+        eventSink: FlowRunEventSink? = nil
     ) async throws -> FlowRunResult {
-        let runID = UUID().uuidString.lowercased()
+        let runID = options.runID?.lowercased() ?? UUID().uuidString.lowercased()
+        let startedAt = Date()
         let stateMap = ir.stateMap()
+        let metadata = inferRuntimeMetadata(ir: ir)
+        let executionMode: FlowExecutionMode
+        switch mode {
+        case .live:
+            executionMode = .live
+        case .dryRun:
+            executionMode = .dry
+        }
+
+        eventSink?(
+            .runStarted(
+                FlowRunStartedEvent(
+                    runID: runID,
+                    flowDefinitionID: options.flowDefinitionID,
+                    mode: executionMode,
+                    startedAt: startedAt,
+                    provider: metadata.provider,
+                    model: metadata.model,
+                    executablePath: metadata.executablePath,
+                    executableSource: metadata.executableSource
+                )
+            )
+        )
 
         var runtime = FlowRuntimeState(
             context: ir.context,
@@ -135,6 +305,7 @@ public final class FlowEngine: Sendable {
         var warnings: [FlowWarning] = []
         var dryFixture: FlowDryRunFixture?
         var executedStates: Set<String> = []
+        var stepSeq = 0
 
         switch mode {
         case .live:
@@ -150,7 +321,13 @@ public final class FlowEngine: Sendable {
             dryFixture = fixture
         }
 
-        let commandQueue = FlowCommandQueue(items: options.commands)
+        let commandQueue = FlowCommandQueue(
+            items: options.commands,
+            runID: runID,
+            eventSink: { event in
+                eventSink?(.commandQueueChanged(event))
+            }
+        )
         let commandInputTask: Task<Void, Never>?
         if let commandInput {
             commandInputTask = Task.detached(priority: .utility) {
@@ -170,17 +347,47 @@ public final class FlowEngine: Sendable {
         while true {
             runtime.totalSteps += 1
             if runtime.totalSteps > ir.defaults.maxTotalSteps {
-                throw FlowErrors.runtime(code: "flow.steps.exceeded", "max_total_steps exceeded")
+                let failure = FlowErrors.runtime(code: "flow.steps.exceeded", "max_total_steps exceeded")
+                eventSink?(
+                    .runCompleted(
+                        FlowRunCompletedEvent(
+                            runID: runID,
+                            status: .failure,
+                            endedAtStateID: currentStateID,
+                            steps: runtime.totalSteps,
+                            finishedAt: Date(),
+                            warningsCount: warnings.count
+                        )
+                    )
+                )
+                throw failure
             }
 
             guard let state = stateMap[currentStateID] else {
-                throw FlowErrors.runtime(code: "flow.validate.schema_error", "State not found during runtime: \(currentStateID)")
+                let failure = FlowErrors.runtime(
+                    code: "flow.validate.schema_error",
+                    "State not found during runtime: \(currentStateID)"
+                )
+                eventSink?(
+                    .runCompleted(
+                        FlowRunCompletedEvent(
+                            runID: runID,
+                            status: .failure,
+                            endedAtStateID: currentStateID,
+                            steps: runtime.totalSteps,
+                            finishedAt: Date(),
+                            warningsCount: warnings.count
+                        )
+                    )
+                )
+                throw failure
             }
             executedStates.insert(currentStateID)
 
             runtime.attempts[currentStateID, default: 0] += 1
             let attempt = runtime.attempts[currentStateID] ?? 1
             let started = Date()
+            let contextBefore = runtime.context
 
             do {
                 let outcome = try await executeStep(
@@ -213,6 +420,30 @@ public final class FlowEngine: Sendable {
                     logSink: logSink
                 )
 
+                stepSeq += 1
+                eventSink?(
+                    .stepChanged(
+                        FlowStepChangedEvent(
+                            runID: runID,
+                            seq: stepSeq,
+                            phase: .runtime,
+                            stateID: currentStateID,
+                            stateType: state.kind.rawValue,
+                            attempt: attempt,
+                            decision: outcome.decision?.rawValue,
+                            transition: outcome.nextStateID,
+                            counter: outcome.counter.map {
+                                FlowRunCounterSnapshot(name: $0.name, value: $0.value, effectiveMax: $0.effectiveMax)
+                            },
+                            duration: duration,
+                            error: nil,
+                            stateOutput: objectValue(from: outcome.stateOutput),
+                            contextDelta: contextDelta(before: contextBefore, after: runtime.context),
+                            stateLast: objectValue(from: runtime.stateLast[currentStateID])
+                        )
+                    )
+                )
+
                 if state.kind == .end {
                     guard let end = state.end else {
                         throw FlowErrors.runtime(code: "flow.validate.schema_error", "end payload missing", stateID: state.id)
@@ -227,18 +458,77 @@ public final class FlowEngine: Sendable {
                             fixture: dryFixture,
                             executedStates: executedStates
                         )
-                        warnings.append(contentsOf: fixtureWarningsOrError)
+                        for warning in fixtureWarningsOrError {
+                            warnings.append(warning)
+                            eventSink?(
+                                .warningRaised(
+                                    FlowWarningRaisedEvent(
+                                        runID: runID,
+                                        code: warning.code,
+                                        message: warning.message,
+                                        scope: warning.scope,
+                                        flowDefinitionID: options.flowDefinitionID,
+                                        stateID: warning.stateID
+                                    )
+                                )
+                            )
+                        }
                     }
 
                     let remainingCommands = await commandQueue.remainingCount()
                     if remainingCommands > 0 {
-                        warnings.append(
-                            FlowWarning(
-                                code: "flow.cli.command_unused",
-                                message: "Unused --command entries: \(remainingCommands)"
+                        let leftoverPreview = await commandQueue.remainingCommands().first.map {
+                            $0.trimmingCharacters(in: .whitespacesAndNewlines)
+                        } ?? "leftover"
+                        eventSink?(
+                            .commandQueueChanged(
+                                FlowCommandQueueChangedEvent(
+                                    runID: runID,
+                                    seq: Int.max,
+                                    action: .leftover,
+                                    commandPreview: leftoverPreview,
+                                    queueDepth: remainingCommands,
+                                    stateID: currentStateID,
+                                    turnID: nil,
+                                    reason: "run_completed_with_unconsumed_commands"
+                                )
+                            )
+                        )
+
+                        let warning = FlowWarning(
+                            code: "flow.cli.command_unused",
+                            message: "Unused --command entries: \(remainingCommands)",
+                            scope: .run,
+                            stateID: nil
+                        )
+                        warnings.append(warning)
+                        eventSink?(
+                            .warningRaised(
+                                FlowWarningRaisedEvent(
+                                    runID: runID,
+                                    code: warning.code,
+                                    message: warning.message,
+                                    scope: warning.scope,
+                                    flowDefinitionID: options.flowDefinitionID,
+                                    stateID: warning.stateID
+                                )
                             )
                         )
                     }
+
+                    let completedAt = Date()
+                    eventSink?(
+                        .runCompleted(
+                            FlowRunCompletedEvent(
+                                runID: runID,
+                                status: .success,
+                                endedAtStateID: state.id,
+                                steps: runtime.totalSteps,
+                                finishedAt: completedAt,
+                                warningsCount: warnings.count
+                            )
+                        )
+                    )
 
                     return FlowRunResult(
                         status: .success,
@@ -271,6 +561,47 @@ public final class FlowEngine: Sendable {
                     errorMessage: error.message,
                     logSink: logSink
                 )
+
+                stepSeq += 1
+                eventSink?(
+                    .stepChanged(
+                        FlowStepChangedEvent(
+                            runID: runID,
+                            seq: stepSeq,
+                            phase: error.phase,
+                            stateID: currentStateID,
+                            stateType: state.kind.rawValue,
+                            attempt: attempt,
+                            decision: nil,
+                            transition: nil,
+                            counter: nil,
+                            duration: duration,
+                            error: FlowRunStepError(
+                                code: error.code,
+                                message: error.message,
+                                fieldPath: error.fieldPath,
+                                line: error.line,
+                                column: error.column
+                            ),
+                            stateOutput: nil,
+                            contextDelta: contextDelta(before: contextBefore, after: runtime.context),
+                            stateLast: objectValue(from: runtime.stateLast[currentStateID])
+                        )
+                    )
+                )
+
+                eventSink?(
+                    .runCompleted(
+                        FlowRunCompletedEvent(
+                            runID: runID,
+                            status: .failure,
+                            endedAtStateID: currentStateID,
+                            steps: runtime.totalSteps,
+                            finishedAt: Date(),
+                            warningsCount: warnings.count
+                        )
+                    )
+                )
                 throw error
             }
         }
@@ -284,7 +615,7 @@ public final class FlowEngine: Sendable {
         runtime: inout FlowRuntimeState,
         commandQueue: FlowCommandQueue,
         options: FlowRunOptions,
-        logSink: ((String) -> Void)?
+        logSink: (@Sendable (String) -> Void)?
     ) async throws -> FlowStepOutcome {
         switch state.kind {
         case .gate:
@@ -383,7 +714,7 @@ public final class FlowEngine: Sendable {
         runtime: inout FlowRuntimeState,
         commandQueue: FlowCommandQueue,
         options: FlowRunOptions,
-        logSink: ((String) -> Void)?
+        logSink: (@Sendable (String) -> Void)?
     ) async throws -> FlowStepOutcome {
         guard let agent = state.agent,
               state.next != nil else {
@@ -477,7 +808,9 @@ public final class FlowEngine: Sendable {
             warnings.append(
                 FlowWarning(
                     code: "flow.dryrun.fixture_unused_state_data",
-                    message: "Dry-run fixture has unused entries for non-executed state \(stateID)"
+                    message: "Dry-run fixture has unused entries for non-executed state \(stateID)",
+                    scope: .state,
+                    stateID: stateID
                 )
             )
         }
@@ -496,7 +829,7 @@ public final class FlowEngine: Sendable {
         duration: TimeInterval,
         errorCode: String? = nil,
         errorMessage: String? = nil,
-        logSink: ((String) -> Void)?
+        logSink: (@Sendable (String) -> Void)?
     ) {
         guard let logSink else { return }
 
@@ -531,5 +864,63 @@ public final class FlowEngine: Sendable {
 
     private func sanitizeLogValue(_ value: String) -> String {
         value.replacingOccurrences(of: "\n", with: " ")
+    }
+
+    private func objectValue(from value: FlowValue?) -> [String: FlowValue]? {
+        guard let value else { return nil }
+        guard case .object(let object) = value else { return nil }
+        return object
+    }
+
+    private func contextDelta(
+        before: [String: FlowValue],
+        after: [String: FlowValue]
+    ) -> [String: FlowValue]? {
+        let keys = Set(before.keys).union(after.keys)
+        var delta: [String: FlowValue] = [:]
+        for key in keys {
+            let lhs = before[key]
+            let rhs = after[key]
+            if lhs != rhs {
+                delta[key] = rhs ?? .null
+            }
+        }
+        return delta.isEmpty ? nil : delta
+    }
+
+    private func inferRuntimeMetadata(ir: FlowIR) -> FlowRuntimeMetadata {
+        let configuredExec = ProcessInfo.processInfo.environment["SCRIPTORIA_CODEX_EXECUTABLE"]?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let executablePath = (configuredExec?.isEmpty == false) ? configuredExec : "codex"
+        let executableSource = (configuredExec?.isEmpty == false) ? "SCRIPTORIA_CODEX_EXECUTABLE" : "default"
+
+        let provider: String?
+        if let executablePath {
+            let token = URL(fileURLWithPath: executablePath).lastPathComponent.lowercased()
+            if token.contains("claude") {
+                provider = "claude"
+            } else if token.contains("kimi") {
+                provider = "kimi"
+            } else {
+                provider = "codex"
+            }
+        } else {
+            provider = nil
+        }
+
+        let model = ir.states.first(where: { $0.kind == .agent })?.agent?.model.map(AgentRuntimeCatalog.normalizeModel)
+
+        return FlowRuntimeMetadata(
+            provider: provider,
+            model: model,
+            executablePath: executablePath,
+            executableSource: executableSource
+        )
+    }
+}
+
+private extension String {
+    var nilIfEmpty: String? {
+        isEmpty ? nil : self
     }
 }

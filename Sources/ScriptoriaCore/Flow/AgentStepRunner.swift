@@ -16,7 +16,7 @@ struct AgentStepRunner {
         stateLast: [String: FlowValue],
         prev: FlowValue?,
         commandQueue: FlowCommandQueue,
-        logSink: ((String) -> Void)?
+        logSink: (@Sendable (String) -> Void)?
     ) async throws -> FlowAgentStepResult {
         guard let agent = state.agent,
               let next = state.next else {
@@ -44,13 +44,13 @@ struct AgentStepRunner {
             )
 
             let interruptMarker = FlowInterruptMarker()
-            let immediateInterrupt = await commandQueue.consume(for: session)
+            let immediateInterrupt = await commandQueue.consume(for: session, stateID: state.id)
             if immediateInterrupt {
                 await interruptMarker.markInterrupted()
             }
             let commandRelayTask = Task.detached(priority: .utility) {
                 while !Task.isCancelled {
-                    let sentInterrupt = await commandQueue.consume(for: session)
+                    let sentInterrupt = await commandQueue.consume(for: session, stateID: state.id)
                     if sentInterrupt {
                         await interruptMarker.markInterrupted()
                         return

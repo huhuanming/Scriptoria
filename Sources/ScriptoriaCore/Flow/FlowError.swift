@@ -43,10 +43,19 @@ public struct FlowError: Error, LocalizedError, Sendable {
 public struct FlowWarning: Sendable {
     public var code: String
     public var message: String
+    public var scope: FlowWarningScope
+    public var stateID: String?
 
-    public init(code: String, message: String) {
+    public init(
+        code: String,
+        message: String,
+        scope: FlowWarningScope = .run,
+        stateID: String? = nil
+    ) {
         self.code = code
         self.message = message
+        self.scope = scope
+        self.stateID = stateID
     }
 }
 

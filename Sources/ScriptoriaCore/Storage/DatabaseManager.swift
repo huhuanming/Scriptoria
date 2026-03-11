@@ -3,7 +3,7 @@ import GRDB
 
 /// Manages the SQLite database for all Scriptoria data
 public final class DatabaseManager: Sendable {
-    private let dbPool: DatabasePool
+    let dbPool: DatabasePool
 
     /// The file path of the database
     public let databasePath: String
@@ -22,6 +22,7 @@ public final class DatabaseManager: Sendable {
         var config = Configuration()
         config.foreignKeysEnabled = true
         config.journalMode = .wal
+        config.busyMode = .timeout(5)
 
         self.dbPool = try DatabasePool(path: path, configuration: config)
         try migrator.migrate(dbPool)
@@ -172,6 +173,18 @@ public final class DatabaseManager: Sendable {
                     .notNull()
                     .defaults(to: AgentTriggerMode.always.rawValue)
             }
+        }
+
+        migrator.registerMigration("v6_flow_m1_schema") { db in
+            try Self.applyFlowSchemaMigration(db: db)
+        }
+
+        migrator.registerMigration("v6_flow_m2_backfill_link") { db in
+            try Self.applyFlowBackfillMigration(db: db)
+        }
+
+        migrator.registerMigration("v6_flow_m3_constraints") { db in
+            try Self.applyFlowConstraintsMigration(db: db)
         }
 
         return migrator

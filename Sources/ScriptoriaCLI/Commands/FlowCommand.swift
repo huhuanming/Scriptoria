@@ -27,9 +27,10 @@ struct FlowValidateCommand: AsyncParsableCommand {
 
     func run() async throws {
         do {
-            _ = try FlowValidator.validateFile(
-                atPath: flowPath,
-                options: .init(checkFileSystem: !noFSCheck)
+            _ = try FlowExecutionService().validate(
+                flowPath: flowPath,
+                noFSCheck: noFSCheck,
+                registerDefinition: true
             )
             print("flow validate ok")
         } catch let error as FlowError {
@@ -56,19 +57,12 @@ struct FlowCompileCommand: AsyncParsableCommand {
 
     func run() async throws {
         do {
-            let ir = try FlowCompiler.compileFile(
-                atPath: flowPath,
-                options: .init(checkFileSystem: !noFSCheck)
+            _ = try FlowExecutionService().compile(
+                flowPath: flowPath,
+                outputPath: out,
+                noFSCheck: noFSCheck,
+                registerDefinition: true
             )
-            let json = try FlowCompiler.renderCanonicalJSON(ir: ir)
-
-            let outputPath = absolutePath(from: out)
-            let outputURL = URL(fileURLWithPath: outputPath)
-            try FileManager.default.createDirectory(
-                at: outputURL.deletingLastPathComponent(),
-                withIntermediateDirectories: true
-            )
-            try json.write(to: outputURL, atomically: true, encoding: .utf8)
             print("flow compile ok")
         } catch let error as FlowError {
             printFlowError(error, flowPath: flowPath)
@@ -149,9 +143,8 @@ struct FlowRunCommand: AsyncParsableCommand {
         let commandInput = interactiveSteerEnabled ? makeInteractiveSteerStream() : nil
 
         do {
-            let result = try await FlowEngine().run(
-                ir: ir,
-                mode: .live,
+            let execution = try await FlowExecutionService().runLive(
+                flowPath: flowPath,
                 options: .init(
                     contextOverrides: contextOverrides,
                     maxAgentRoundsCap: maxAgentRounds,
@@ -163,7 +156,7 @@ struct FlowRunCommand: AsyncParsableCommand {
                     print(line)
                 }
             )
-            for warning in result.warnings {
+            for warning in execution.result.warnings {
                 print("warning_code=\(warning.code) warning_message=\(warning.message)")
             }
         } catch let error as FlowError {
@@ -186,9 +179,8 @@ struct FlowDryRunCommand: AsyncParsableCommand {
     var fixture: String
 
     func run() async throws {
-        let ir: FlowIR
         do {
-            ir = try FlowCompiler.compileFile(atPath: flowPath)
+            _ = try FlowCompiler.compileFile(atPath: flowPath)
         } catch let error as FlowError {
             let mapped = FlowError(
                 code: error.code,
@@ -206,27 +198,16 @@ struct FlowDryRunCommand: AsyncParsableCommand {
             throw ExitCode.failure
         }
 
-        let dryFixture: FlowDryRunFixture
         do {
-            dryFixture = try FlowDryRunFixture.load(fromPath: fixture)
-        } catch let error as FlowError {
-            printFlowError(error, flowPath: flowPath)
-            throw ExitCode.failure
-        } catch {
-            print("phase=runtime-dry-run error_code=flow.validate.schema_error error_message=\(error.localizedDescription) flow_path=\(flowPath)")
-            throw ExitCode.failure
-        }
-
-        do {
-            let result = try await FlowEngine().run(
-                ir: ir,
-                mode: .dryRun(dryFixture),
+            let execution = try await FlowExecutionService().runDry(
+                flowPath: flowPath,
+                fixturePath: fixture,
                 options: .init(),
                 logSink: { line in
                     print(line)
                 }
             )
-            for warning in result.warnings {
+            for warning in execution.result.warnings {
                 print("warning_code=\(warning.code) warning_message=\(warning.message)")
             }
         } catch let error as FlowError {
