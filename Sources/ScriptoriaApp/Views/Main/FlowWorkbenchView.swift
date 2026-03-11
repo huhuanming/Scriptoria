@@ -2882,11 +2882,14 @@ struct FlowDetailView: View {
             }
             let turns = max(points.count - 2, 0)
             let length = editorPolylineLength(points)
-            let better = routeCrossings < bestRouteCrossings
-                || (routeCrossings == bestRouteCrossings && routeOverlaps < bestRouteOverlaps)
-                || (routeCrossings == bestRouteCrossings && routeOverlaps == bestRouteOverlaps && intersections < bestIntersectionCount)
-                || (routeCrossings == bestRouteCrossings && routeOverlaps == bestRouteOverlaps && intersections == bestIntersectionCount && turns < bestTurns)
-                || (routeCrossings == bestRouteCrossings && routeOverlaps == bestRouteOverlaps && intersections == bestIntersectionCount && turns == bestTurns && length < bestLength)
+            // Node penetration is treated as the strongest anti-goal:
+            // pick the route that intersects the fewest node obstacles first,
+            // then optimize edge crossings/overlaps.
+            let better = intersections < bestIntersectionCount
+                || (intersections == bestIntersectionCount && routeCrossings < bestRouteCrossings)
+                || (intersections == bestIntersectionCount && routeCrossings == bestRouteCrossings && routeOverlaps < bestRouteOverlaps)
+                || (intersections == bestIntersectionCount && routeCrossings == bestRouteCrossings && routeOverlaps == bestRouteOverlaps && turns < bestTurns)
+                || (intersections == bestIntersectionCount && routeCrossings == bestRouteCrossings && routeOverlaps == bestRouteOverlaps && turns == bestTurns && length < bestLength)
             if better {
                 bestPoints = points
                 bestIntersectionCount = intersections
