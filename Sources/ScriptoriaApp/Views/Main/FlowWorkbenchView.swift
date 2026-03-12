@@ -221,6 +221,40 @@ private struct FlowEditorRoutingMetrics {
     )
 }
 
+private enum FlowEditorLayoutOrderMode: String {
+    case barycenter
+    case barycenterReverse
+    case lexical
+    case fanoutFirst
+}
+
+private struct FlowEditorLayoutOptions {
+    var id: String
+    var rankStep: CGFloat
+    var laneStep: CGFloat
+    var stackStep: CGFloat
+    var endSpread: CGFloat
+    var orderMode: FlowEditorLayoutOrderMode
+
+    static let quick = FlowEditorLayoutOptions(
+        id: "quick",
+        rankStep: 300,
+        laneStep: 170,
+        stackStep: 96,
+        endSpread: 0.9,
+        orderMode: .barycenter
+    )
+}
+
+private struct FlowEditorLayoutCandidate {
+    var configID: String
+    var centers: [String: CGPoint]
+    var metrics: FlowEditorRoutingMetrics
+    var nodeOverlaps: Int
+    var displacement: Int
+    var score: Int
+}
+
 private enum FlowEditorViewMode: String, CaseIterable, Identifiable {
     case simplified = "Simple"
     case full = "Full"
@@ -306,6 +340,7 @@ struct FlowDetailView: View {
     @State private var editorFocusSelection = true
     @State private var editorStrictPorts = true
     @State private var editorEnforceLayoutGate = true
+    @State private var editorForceFullReflow = false
 
     private let editorCanvasCoordinateSpace = "flow-editor-canvas"
     private let editorNodeSize = CGSize(width: 200, height: 94)
@@ -524,6 +559,11 @@ struct FlowDetailView: View {
                 }
                 .disabled(editorDraft == nil)
 
+                Button("Best Arrange") {
+                    bestArrangeEditorNodes()
+                }
+                .disabled(editorDraft == nil)
+
                 Menu("View") {
                     Picker("Graph", selection: $editorViewMode) {
                         ForEach(FlowEditorViewMode.allCases) { mode in
@@ -540,6 +580,7 @@ struct FlowDetailView: View {
                     Toggle("Focus Selection", isOn: $editorFocusSelection)
                     Toggle("Strict Ports", isOn: $editorStrictPorts)
                     Toggle("Enforce Layout Gate", isOn: $editorEnforceLayoutGate)
+                    Toggle("Force Full Reflow", isOn: $editorForceFullReflow)
                 }
                 .disabled(editorDraft == nil)
 
@@ -1768,13 +1809,84 @@ struct FlowDetailView: View {
     private func autoLayoutEditorNodes() {
         mutateEditorDraft { draft in
             let definition = flowDefinition(from: draft)
-            let centers = autoLayoutCenters(for: definition)
+            let centers = autoLayoutCenters(
+                for: definition,
+                options: .quick
+            )
             for index in draft.nodes.indices {
                 let id = draft.nodes[index].id
                 if let center = centers[id] {
                     draft.nodes[index].center = center
                 }
             }
+        }
+    }
+
+    private func bestArrangeEditorNodes() {
+        var info: String?
+        let forceFullReflow = editorForceFullReflow
+
+        mutateEditorDraft { draft in
+            let definition = flowDefinition(from: draft)
+            let currentCenters = Dictionary(uniqueKeysWithValues: draft.nodes.map { ($0.id, $0.center) })
+            let configs = editorBestArrangeOptions(forceFullReflow: forceFullReflow)
+
+            var bestCandidate: FlowEditorLayoutCandidate?
+
+            @MainActor
+            func evaluateCandidate(configID: String, centers: [String: CGPoint]) {
+                let candidateDraft = editorDraftApplyingCenters(draft, centers: centers)
+                let metrics = editorDraftRoutingMetrics(for: candidateDraft, strictPorts: editorStrictPorts)
+                let nodeOverlaps = editorNodeOverlapCount(for: centers)
+                let displacement = editorNodeDisplacement(from: currentCenters, to: centers)
+                let score = editorLayoutCandidateScore(
+                    metrics: metrics,
+                    nodeOverlaps: nodeOverlaps,
+                    displacement: displacement,
+                    forceFullReflow: forceFullReflow
+                )
+                let candidate = FlowEditorLayoutCandidate(
+                    configID: configID,
+                    centers: centers,
+                    metrics: metrics,
+                    nodeOverlaps: nodeOverlaps,
+                    displacement: displacement,
+                    score: score
+                )
+                if let existing = bestCandidate, existing.score <= candidate.score {
+                    return
+                }
+                bestCandidate = candidate
+            }
+
+            evaluateCandidate(configID: "current", centers: currentCenters)
+            for option in configs {
+                let centers = autoLayoutCenters(for: definition, options: option)
+                evaluateCandidate(configID: option.id, centers: centers)
+            }
+
+            guard let best = bestCandidate else { return }
+
+            var changed = false
+            for index in draft.nodes.indices {
+                let id = draft.nodes[index].id
+                guard let center = best.centers[id] else { continue }
+                if hypot(draft.nodes[index].center.x - center.x, draft.nodes[index].center.y - center.y) > 0.5 {
+                    changed = true
+                }
+                draft.nodes[index].center = center
+            }
+
+            if changed {
+                info = "Best Arrange applied (\(configs.count + 1) candidates, best: \(best.configID), x=\(best.metrics.crossings), o=\(best.metrics.overlaps), node_overlap=\(best.nodeOverlaps))."
+            } else {
+                info = "Best Arrange checked \(configs.count + 1) candidates; current layout is already best."
+            }
+        }
+
+        if let info {
+            editorInfoMessage = info
+            editorErrorMessage = nil
         }
     }
 
@@ -3191,7 +3303,80 @@ struct FlowDetailView: View {
         try data.write(to: URL(fileURLWithPath: path), options: [.atomic])
     }
 
-    private func autoLayoutCenters(for definition: FlowYAMLDefinition) -> [String: CGPoint] {
+    private func editorBestArrangeOptions(forceFullReflow: Bool) -> [FlowEditorLayoutOptions] {
+        let preserveSet: [FlowEditorLayoutOptions] = [
+            .quick,
+            .init(id: "compact-barycenter", rankStep: 270, laneStep: 150, stackStep: 88, endSpread: 0.85, orderMode: .barycenter),
+            .init(id: "spacious-barycenter", rankStep: 340, laneStep: 190, stackStep: 110, endSpread: 0.95, orderMode: .barycenter),
+            .init(id: "fanout-tight", rankStep: 285, laneStep: 165, stackStep: 90, endSpread: 0.88, orderMode: .fanoutFirst),
+            .init(id: "fanout-wide", rankStep: 325, laneStep: 185, stackStep: 104, endSpread: 0.92, orderMode: .fanoutFirst),
+            .init(id: "reverse-sweep", rankStep: 300, laneStep: 170, stackStep: 96, endSpread: 0.9, orderMode: .barycenterReverse)
+        ]
+        guard forceFullReflow else {
+            return preserveSet
+        }
+        return preserveSet + [
+            .init(id: "lexical-tight", rankStep: 260, laneStep: 150, stackStep: 88, endSpread: 0.82, orderMode: .lexical),
+            .init(id: "lexical-wide", rankStep: 360, laneStep: 200, stackStep: 112, endSpread: 1.0, orderMode: .lexical),
+            .init(id: "full-fanout", rankStep: 330, laneStep: 200, stackStep: 110, endSpread: 1.05, orderMode: .fanoutFirst)
+        ]
+    }
+
+    private func editorDraftApplyingCenters(_ draft: FlowEditorDraft, centers: [String: CGPoint]) -> FlowEditorDraft {
+        var updated = draft
+        for index in updated.nodes.indices {
+            let id = updated.nodes[index].id
+            if let center = centers[id] {
+                updated.nodes[index].center = center
+            }
+        }
+        return updated
+    }
+
+    private func editorNodeOverlapCount(for centers: [String: CGPoint]) -> Int {
+        let ids = centers.keys.sorted()
+        let rects = ids.map { id -> CGRect in
+            let center = centers[id] ?? .zero
+            return editorNodeRect(center: center).insetBy(dx: -6, dy: -4)
+        }
+        guard rects.count >= 2 else { return 0 }
+        var overlaps = 0
+        for i in 0..<(rects.count - 1) {
+            for j in (i + 1)..<rects.count where rects[i].intersects(rects[j]) {
+                overlaps += 1
+            }
+        }
+        return overlaps
+    }
+
+    private func editorNodeDisplacement(from base: [String: CGPoint], to candidate: [String: CGPoint]) -> Int {
+        var total: CGFloat = 0
+        for (id, point) in candidate {
+            guard let original = base[id] else { continue }
+            total += hypot(point.x - original.x, point.y - original.y)
+        }
+        return Int(total.rounded())
+    }
+
+    private func editorLayoutCandidateScore(
+        metrics: FlowEditorRoutingMetrics,
+        nodeOverlaps: Int,
+        displacement: Int,
+        forceFullReflow: Bool
+    ) -> Int {
+        let movementWeight = forceFullReflow ? 8 : 40
+        return nodeOverlaps * 10_000_000
+            + metrics.overlaps * 1_500_000
+            + metrics.crossings * 200_000
+            + metrics.bends * 120
+            + metrics.length
+            + displacement * movementWeight
+    }
+
+    private func autoLayoutCenters(
+        for definition: FlowYAMLDefinition,
+        options: FlowEditorLayoutOptions = .quick
+    ) -> [String: CGPoint] {
         let stateMap = Dictionary(uniqueKeysWithValues: definition.states.map { ($0.id, $0) })
         let stateIDs = Set(definition.states.map(\.id))
         var incoming: [String: [(from: String, label: String)]] = [:]
@@ -3269,10 +3454,11 @@ struct FlowDetailView: View {
 
         let baseX: CGFloat = 190
         let baseY: CGFloat = 300
-        let rankStep: CGFloat = 300
-        let laneStep: CGFloat = 170
-        let stackStep: CGFloat = 96
+        let rankStep = options.rankStep
+        let laneStep = options.laneStep
+        let stackStep = options.stackStep
         let terminalX = baseX + CGFloat(terminalRank) * rankStep
+        let fanoutByID = outgoing.mapValues(\.count)
 
         func barycenter(_ id: String) -> Double {
             let parents = incoming[id, default: []]
@@ -3285,6 +3471,41 @@ struct FlowDetailView: View {
             }
             guard !values.isEmpty else { return 0 }
             return values.reduce(0, +) / Double(values.count)
+        }
+
+        func orderedNodeIDs(_ ids: [String]) -> [String] {
+            ids.sorted { lhs, rhs in
+                switch options.orderMode {
+                case .barycenter:
+                    let b0 = barycenter(lhs)
+                    let b1 = barycenter(rhs)
+                    if abs(b0 - b1) > 0.001 {
+                        return b0 < b1
+                    }
+                    return lhs < rhs
+                case .barycenterReverse:
+                    let b0 = barycenter(lhs)
+                    let b1 = barycenter(rhs)
+                    if abs(b0 - b1) > 0.001 {
+                        return b0 > b1
+                    }
+                    return lhs < rhs
+                case .fanoutFirst:
+                    let f0 = fanoutByID[lhs] ?? 0
+                    let f1 = fanoutByID[rhs] ?? 0
+                    if f0 != f1 {
+                        return f0 > f1
+                    }
+                    let b0 = barycenter(lhs)
+                    let b1 = barycenter(rhs)
+                    if abs(b0 - b1) > 0.001 {
+                        return b0 < b1
+                    }
+                    return lhs < rhs
+                case .lexical:
+                    return lhs < rhs
+                }
+            }
         }
 
         func assignStackedIDs(
@@ -3321,14 +3542,7 @@ struct FlowDetailView: View {
         for rankValue in grouped.keys.sorted() {
             guard let laneGroups = grouped[rankValue] else { continue }
             for laneValue in laneGroups.keys.sorted() {
-                let ids = laneGroups[laneValue, default: []].sorted { lhs, rhs in
-                    let b0 = barycenter(lhs)
-                    let b1 = barycenter(rhs)
-                    if abs(b0 - b1) > 0.001 {
-                        return b0 < b1
-                    }
-                    return lhs < rhs
-                }
+                let ids = orderedNodeIDs(laneGroups[laneValue, default: []])
                 assignStackedIDs(
                     ids,
                     x: baseX + CGFloat(rankValue) * rankStep,
@@ -3354,14 +3568,14 @@ struct FlowDetailView: View {
         assignStackedIDs(
             successEnds,
             x: terminalX,
-            baseY: baseY - laneStep * 0.9,
+            baseY: baseY - laneStep * options.endSpread,
             stackStep: 78,
             into: &centers
         )
         assignStackedIDs(
             failureEnds,
             x: terminalX,
-            baseY: baseY + laneStep * 0.9,
+            baseY: baseY + laneStep * options.endSpread,
             stackStep: 78,
             into: &centers
         )
