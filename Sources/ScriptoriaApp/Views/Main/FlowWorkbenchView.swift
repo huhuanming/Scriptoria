@@ -206,6 +206,7 @@ private struct FlowEditorRoutingResult {
 }
 
 private struct FlowEditorRoutingMetrics {
+    var nodePenetrations: Int
     var crossings: Int
     var overlaps: Int
     var bends: Int
@@ -213,6 +214,7 @@ private struct FlowEditorRoutingMetrics {
     var score: Int
 
     static let zero = FlowEditorRoutingMetrics(
+        nodePenetrations: 0,
         crossings: 0,
         overlaps: 0,
         bends: 0,
@@ -253,6 +255,12 @@ private struct FlowEditorLayoutCandidate {
     var nodeOverlaps: Int
     var displacement: Int
     var score: Int
+}
+
+private struct FlowEditorCanvasGeometry {
+    var size: CGSize
+    var offset: CGPoint
+    var center: CGPoint
 }
 
 private enum FlowEditorViewMode: String, CaseIterable, Identifiable {
@@ -341,15 +349,19 @@ struct FlowDetailView: View {
     @State private var editorStrictPorts = true
     @State private var editorEnforceLayoutGate = true
     @State private var editorForceFullReflow = false
+    @State private var editorCanvasCenterToken = UUID()
 
     private let editorCanvasCoordinateSpace = "flow-editor-canvas"
+    private let editorCanvasCenterAnchorID = "flow-editor-canvas-center-anchor"
     private let editorNodeSize = CGSize(width: 200, height: 94)
     private let editorNodeCornerRadius: CGFloat = 10
     private let editorCanvasMinZoom: CGFloat = 0.4
     private let editorCanvasMaxZoom: CGFloat = 2.4
     private let editorCanvasZoomStep: CGFloat = 0.1
+    private let editorCanvasWorldPadding: CGFloat = 280
     private let editorLayoutGateMaxCrossings = 2
     private let editorLayoutGateMaxOverlaps = 0
+    private let editorLayoutGateMaxNodePenetrations = 0
 
     private var selectedSummary: FlowDefinitionStatusSummary? {
         appState.selectedFlowDefinition
@@ -642,7 +654,6 @@ struct FlowDetailView: View {
 
     @ViewBuilder
     private func editorCanvas(draft: FlowEditorDraft) -> some View {
-        let canvasSize = editorCanvasSize(for: draft)
         let nodeCenters = Dictionary(uniqueKeysWithValues: draft.nodes.map { ($0.id, $0.center) })
         let nodeRects = nodeCenters.mapValues { center in
             editorNodeRect(center: center)
@@ -658,7 +669,7 @@ struct FlowDetailView: View {
         )
         let mainY: CGFloat = {
             let points = mainPathIDs.compactMap { nodeCenters[$0]?.y }
-            guard !points.isEmpty else { return canvasSize.height * 0.45 }
+            guard !points.isEmpty else { return 0 }
             return points.reduce(0, +) / CGFloat(points.count)
         }()
         let focus = editorFocusSnapshot(
@@ -671,103 +682,148 @@ struct FlowDetailView: View {
             nodeRects: nodeRects,
             mainPathEdgeIDs: mainPathEdgeIDs
         )
+        let canvasGeometry = editorCanvasGeometry(
+            nodeRects: nodeRects,
+            routes: routing.routes
+        )
+        let canvasOffset = canvasGeometry.offset
+        let localNodeCenters = nodeCenters.mapValues { center in
+            CGPoint(x: center.x + canvasOffset.x, y: center.y + canvasOffset.y)
+        }
+        let localMainY = mainY + canvasOffset.y
+        let localRoutes = routing.routes.mapValues { route in
+            FlowEditorEdgeRoute(
+                points: route.points.map {
+                    CGPoint(x: $0.x + canvasOffset.x, y: $0.y + canvasOffset.y)
+                },
+                labelPosition: CGPoint(
+                    x: route.labelPosition.x + canvasOffset.x,
+                    y: route.labelPosition.y + canvasOffset.y
+                )
+            )
+        }
+        let canvasSize = canvasGeometry.size
         let scaledSize = CGSize(
             width: canvasSize.width * editorCanvasZoom,
             height: canvasSize.height * editorCanvasZoom
         )
 
         ZStack(alignment: .bottomTrailing) {
-            ScrollView([.horizontal, .vertical]) {
-                ZStack(alignment: .topLeading) {
-                    Rectangle()
-                        .fill(Color(nsColor: .windowBackgroundColor))
-                        .frame(width: canvasSize.width, height: canvasSize.height)
+            ScrollViewReader { proxy in
+                ScrollView([.horizontal, .vertical]) {
+                    ZStack(alignment: .topLeading) {
+                        Rectangle()
+                            .fill(Color(nsColor: .windowBackgroundColor))
+                            .frame(width: canvasSize.width, height: canvasSize.height)
 
-                    editorLaneGuideOverlay(canvasSize: canvasSize, mainY: mainY)
+                        editorLaneGuideOverlay(canvasSize: canvasSize, mainY: localMainY)
 
-                    ForEach(visibleEdges) { edge in
-                        let showsLabel = editorShouldShowLabel(
-                            for: edge,
-                            focus: focus,
-                            mainPathEdgeIDs: mainPathEdgeIDs
-                        )
-                        let highlighted = !editorFocusSelection || focus.selectedID == nil || focus.highlightedEdgeIDs.contains(edge.id)
-                        let route = routing.routes[edge.id] ?? FlowEditorEdgeRoute(
-                            points: [
-                                nodeCenters[edge.fromID] ?? .zero,
-                                nodeCenters[edge.toID] ?? .zero
-                            ],
-                            labelPosition: nodeCenters[edge.toID] ?? .zero
-                        )
-                        let jumps = routing.jumps[edge.id] ?? []
-                        editorEdgeView(
-                            edge: edge,
-                            route: route,
-                            jumps: jumps,
-                            highlighted: highlighted,
-                            showsLabel: showsLabel,
-                            mainPathEdgeIDs: mainPathEdgeIDs
-                        )
+                        ForEach(visibleEdges) { edge in
+                            let showsLabel = editorShouldShowLabel(
+                                for: edge,
+                                focus: focus,
+                                mainPathEdgeIDs: mainPathEdgeIDs
+                            )
+                            let highlighted = !editorFocusSelection || focus.selectedID == nil || focus.highlightedEdgeIDs.contains(edge.id)
+                            let route = localRoutes[edge.id] ?? FlowEditorEdgeRoute(
+                                points: [
+                                    localNodeCenters[edge.fromID] ?? .zero,
+                                    localNodeCenters[edge.toID] ?? .zero
+                                ],
+                                labelPosition: localNodeCenters[edge.toID] ?? .zero
+                            )
+                            let jumps = (routing.jumps[edge.id] ?? []).map { jump in
+                                FlowEditorRouteJump(
+                                    point: CGPoint(
+                                        x: jump.point.x + canvasOffset.x,
+                                        y: jump.point.y + canvasOffset.y
+                                    ),
+                                    isHorizontal: jump.isHorizontal
+                                )
+                            }
+                            editorEdgeView(
+                                edge: edge,
+                                route: route,
+                                jumps: jumps,
+                                highlighted: highlighted,
+                                showsLabel: showsLabel,
+                                mainPathEdgeIDs: mainPathEdgeIDs
+                            )
+                        }
+
+                        ForEach(draft.nodes) { node in
+                            let isSelected = node.id == draft.selectedNodeID
+                            let isRelated = !editorFocusSelection || focus.selectedID == nil || focus.relatedNodeIDs.contains(node.id)
+                            editorNodeCard(
+                                node: node,
+                                isSelected: isSelected,
+                                isDimmed: !isRelated,
+                                isOnMainPath: mainPathIDs.contains(node.id)
+                            )
+                                .position(
+                                    x: (localNodeCenters[node.id] ?? node.center).x,
+                                    y: (localNodeCenters[node.id] ?? node.center).y
+                                )
+                        }
+
+                        Color.clear
+                            .frame(width: 1, height: 1)
+                            .position(canvasGeometry.center)
+                            .id(editorCanvasCenterAnchorID)
                     }
-
-                    ForEach(draft.nodes) { node in
-                        let isSelected = node.id == draft.selectedNodeID
-                        let isRelated = !editorFocusSelection || focus.selectedID == nil || focus.relatedNodeIDs.contains(node.id)
-                        editorNodeCard(
-                            node: node,
-                            isSelected: isSelected,
-                            isDimmed: !isRelated,
-                            isOnMainPath: mainPathIDs.contains(node.id)
-                        )
-                            .position(node.center)
-                    }
+                    .frame(width: canvasSize.width, height: canvasSize.height)
+                    .scaleEffect(editorCanvasZoom, anchor: .topLeading)
+                    .frame(width: scaledSize.width, height: scaledSize.height, alignment: .topLeading)
+                    .coordinateSpace(name: editorCanvasCoordinateSpace)
                 }
-                .frame(width: canvasSize.width, height: canvasSize.height)
-                .scaleEffect(editorCanvasZoom, anchor: .topLeading)
-                .frame(width: scaledSize.width, height: scaledSize.height, alignment: .topLeading)
-                .coordinateSpace(name: editorCanvasCoordinateSpace)
-            }
-            .scrollDisabled(isNodeDragging)
-            .overlay(alignment: .bottomTrailing) {
-                HStack(spacing: 4) {
-                    Button {
-                        adjustEditorCanvasZoom(by: -editorCanvasZoomStep)
-                    } label: {
-                        Image(systemName: "minus")
-                            .frame(width: 20, height: 20)
-                    }
-                    .disabled(editorCanvasZoom <= editorCanvasMinZoom + 0.001)
-
-                    Button {
-                        setEditorCanvasZoom(1)
-                    } label: {
-                        Text("\(Int((editorCanvasZoom * 100).rounded()))%")
-                            .font(.caption2.monospacedDigit())
-                            .frame(minWidth: 42)
-                    }
-                    .help("Reset zoom")
-
-                    Button {
-                        adjustEditorCanvasZoom(by: editorCanvasZoomStep)
-                    } label: {
-                        Image(systemName: "plus")
-                            .frame(width: 20, height: 20)
-                    }
-                    .disabled(editorCanvasZoom >= editorCanvasMaxZoom - 0.001)
+                .scrollDisabled(isNodeDragging)
+                .onAppear {
+                    editorCenterCanvas(using: proxy)
                 }
-                .buttonStyle(.bordered)
-                .controlSize(.small)
-                .padding(10)
-                .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 8))
-                .padding(12)
-            }
-            .overlay(alignment: .topLeading) {
-                if !visibleEdges.isEmpty {
-                    editorRoutingMetricsPanel(
-                        metrics: routing.metrics,
-                        edgeCount: visibleEdges.count
-                    )
+                .onChange(of: editorCanvasCenterToken) { _, _ in
+                    editorCenterCanvas(using: proxy)
+                }
+                .overlay(alignment: .bottomTrailing) {
+                    HStack(spacing: 4) {
+                        Button {
+                            adjustEditorCanvasZoom(by: -editorCanvasZoomStep)
+                        } label: {
+                            Image(systemName: "minus")
+                                .frame(width: 20, height: 20)
+                        }
+                        .disabled(editorCanvasZoom <= editorCanvasMinZoom + 0.001)
+
+                        Button {
+                            setEditorCanvasZoom(1)
+                        } label: {
+                            Text("\(Int((editorCanvasZoom * 100).rounded()))%")
+                                .font(.caption2.monospacedDigit())
+                                .frame(minWidth: 42)
+                        }
+                        .help("Reset zoom")
+
+                        Button {
+                            adjustEditorCanvasZoom(by: editorCanvasZoomStep)
+                        } label: {
+                            Image(systemName: "plus")
+                                .frame(width: 20, height: 20)
+                        }
+                        .disabled(editorCanvasZoom >= editorCanvasMaxZoom - 0.001)
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .padding(10)
+                    .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 8))
                     .padding(12)
+                }
+                .overlay(alignment: .topLeading) {
+                    if !visibleEdges.isEmpty {
+                        editorRoutingMetricsPanel(
+                            metrics: routing.metrics,
+                            edgeCount: visibleEdges.count
+                        )
+                        .padding(12)
+                    }
                 }
             }
         }
@@ -805,7 +861,7 @@ struct FlowDetailView: View {
     private func editorRoutingMetricsPanel(metrics: FlowEditorRoutingMetrics, edgeCount: Int) -> some View {
         let gateBlocked = editorLayoutGateFailureReason(for: metrics) != nil
         VStack(alignment: .leading, spacing: 4) {
-            Text("edges \(edgeCount)  x \(metrics.crossings)  o \(metrics.overlaps)  b \(metrics.bends)")
+            Text("edges \(edgeCount)  n \(metrics.nodePenetrations)  x \(metrics.crossings)  o \(metrics.overlaps)  b \(metrics.bends)")
                 .font(.caption2.monospacedDigit())
                 .foregroundStyle(.primary)
             Text("score \(metrics.score)  len \(metrics.length)")
@@ -1695,6 +1751,7 @@ struct FlowDetailView: View {
             editorErrorMessage = nil
             dragBaseCenters = [:]
             isNodeDragging = false
+            editorCanvasCenterToken = UUID()
         } catch {
             editorDraft = nil
             editorHistory = []
@@ -1820,6 +1877,7 @@ struct FlowDetailView: View {
                 }
             }
         }
+        editorCanvasCenterToken = UUID()
     }
 
     private func bestArrangeEditorNodes() {
@@ -1878,7 +1936,7 @@ struct FlowDetailView: View {
             }
 
             if changed {
-                info = "Best Arrange applied (\(configs.count + 1) candidates, best: \(best.configID), x=\(best.metrics.crossings), o=\(best.metrics.overlaps), node_overlap=\(best.nodeOverlaps))."
+                info = "Best Arrange applied (\(configs.count + 1) candidates, best: \(best.configID), n=\(best.metrics.nodePenetrations), x=\(best.metrics.crossings), o=\(best.metrics.overlaps), node_overlap=\(best.nodeOverlaps))."
             } else {
                 info = "Best Arrange checked \(configs.count + 1) candidates; current layout is already best."
             }
@@ -1888,6 +1946,7 @@ struct FlowDetailView: View {
             editorInfoMessage = info
             editorErrorMessage = nil
         }
+        editorCanvasCenterToken = UUID()
     }
 
     private func undoEditor() {
@@ -2000,6 +2059,9 @@ struct FlowDetailView: View {
 
     private func editorLayoutGateFailureReason(for metrics: FlowEditorRoutingMetrics) -> String? {
         var issues: [String] = []
+        if metrics.nodePenetrations > editorLayoutGateMaxNodePenetrations {
+            issues.append("node_penetrations \(metrics.nodePenetrations) > \(editorLayoutGateMaxNodePenetrations)")
+        }
         if metrics.overlaps > editorLayoutGateMaxOverlaps {
             issues.append("overlaps \(metrics.overlaps) > \(editorLayoutGateMaxOverlaps)")
         }
@@ -2024,10 +2086,9 @@ struct FlowDetailView: View {
         let deltaX = (value.location.x - value.startLocation.x) / zoom
         let deltaY = (value.location.y - value.startLocation.y) / zoom
         let proposed = CGPoint(x: base.x + deltaX, y: base.y + deltaY)
-        let clamped = CGPoint(x: max(proposed.x, 120), y: max(proposed.y, 80))
         mutateEditorDraft(pushHistory: false, markDirty: false) { edited in
             guard let index = edited.nodes.firstIndex(where: { $0.id == nodeID }) else { return }
-            edited.nodes[index].center = clamped
+            edited.nodes[index].center = proposed
             edited.selectedNodeID = nodeID
         }
     }
@@ -2039,10 +2100,9 @@ struct FlowDetailView: View {
         let deltaX = (value.location.x - value.startLocation.x) / zoom
         let deltaY = (value.location.y - value.startLocation.y) / zoom
         let proposed = CGPoint(x: base.x + deltaX, y: base.y + deltaY)
-        let clamped = CGPoint(x: max(proposed.x, 120), y: max(proposed.y, 80))
         mutateEditorDraft(pushHistory: true, markDirty: true) { edited in
             guard let index = edited.nodes.firstIndex(where: { $0.id == nodeID }) else { return }
-            edited.nodes[index].center = clamped
+            edited.nodes[index].center = proposed
             edited.selectedNodeID = nodeID
         }
     }
@@ -2432,10 +2492,52 @@ struct FlowDetailView: View {
         return edges
     }
 
-    private func editorCanvasSize(for draft: FlowEditorDraft) -> CGSize {
-        let maxX = max(draft.nodes.map { $0.center.x }.max() ?? 0, 1000)
-        let maxY = max(draft.nodes.map { $0.center.y }.max() ?? 0, 700)
-        return CGSize(width: maxX + 320, height: maxY + 260)
+    private func editorCanvasGeometry(
+        nodeRects: [String: CGRect],
+        routes: [String: FlowEditorEdgeRoute]
+    ) -> FlowEditorCanvasGeometry {
+        var minX = nodeRects.values.map(\.minX).min() ?? 0
+        var maxX = nodeRects.values.map(\.maxX).max() ?? 900
+        var minY = nodeRects.values.map(\.minY).min() ?? 0
+        var maxY = nodeRects.values.map(\.maxY).max() ?? 560
+
+        for route in routes.values {
+            for point in route.points {
+                minX = min(minX, point.x)
+                maxX = max(maxX, point.x)
+                minY = min(minY, point.y)
+                maxY = max(maxY, point.y)
+            }
+            minX = min(minX, route.labelPosition.x)
+            maxX = max(maxX, route.labelPosition.x)
+            minY = min(minY, route.labelPosition.y)
+            maxY = max(maxY, route.labelPosition.y)
+        }
+
+        let widthSpan = max(maxX - minX, 1)
+        let heightSpan = max(maxY - minY, 1)
+        let requiredWidth = widthSpan + editorCanvasWorldPadding * 2
+        let requiredHeight = heightSpan + editorCanvasWorldPadding * 2
+        let canvasWidth = max(requiredWidth, 1400)
+        let canvasHeight = max(requiredHeight, 880)
+        let offsetX = -minX + editorCanvasWorldPadding + ((canvasWidth - requiredWidth) / 2)
+        let offsetY = -minY + editorCanvasWorldPadding + ((canvasHeight - requiredHeight) / 2)
+        return FlowEditorCanvasGeometry(
+            size: CGSize(width: canvasWidth, height: canvasHeight),
+            offset: CGPoint(x: offsetX, y: offsetY),
+            center: CGPoint(
+                x: ((minX + maxX) / 2) + offsetX,
+                y: ((minY + maxY) / 2) + offsetY
+            )
+        )
+    }
+
+    private func editorCenterCanvas(using proxy: ScrollViewProxy) {
+        DispatchQueue.main.async {
+            withAnimation(.easeInOut(duration: 0.26)) {
+                proxy.scrollTo(editorCanvasCenterAnchorID, anchor: .center)
+            }
+        }
     }
 
     private func editorNodeRect(center: CGPoint) -> CGRect {
@@ -2498,7 +2600,11 @@ struct FlowDetailView: View {
             )
         }
 
-        var bestMetrics = editorRoutingMetrics(routes: routes, orderedEdges: orderedEdges)
+        var bestMetrics = editorRoutingMetrics(
+            routes: routes,
+            orderedEdges: orderedEdges,
+            nodeRects: nodeRects
+        )
         var iteration = 0
         while iteration < 2 {
             iteration += 1
@@ -2532,7 +2638,11 @@ struct FlowDetailView: View {
                     existingRoutes: existing
                 )
 
-                let metrics = editorRoutingMetrics(routes: routes, orderedEdges: orderedEdges)
+                let metrics = editorRoutingMetrics(
+                    routes: routes,
+                    orderedEdges: orderedEdges,
+                    nodeRects: nodeRects
+                )
                 if metrics.score < bestMetrics.score {
                     bestMetrics = metrics
                     improved = true
@@ -2629,7 +2739,8 @@ struct FlowDetailView: View {
 
     private func editorRoutingMetrics(
         routes: [String: FlowEditorEdgeRoute],
-        orderedEdges: [FlowEditorCanvasEdge]
+        orderedEdges: [FlowEditorCanvasEdge],
+        nodeRects: [String: CGRect]
     ) -> FlowEditorRoutingMetrics {
         var bends = 0
         var length: CGFloat = 0
@@ -2653,11 +2764,23 @@ struct FlowDetailView: View {
             }
         }
 
-        let score = crossings * 10000
+        var nodePenetrations = 0
+        for edge in orderedEdges {
+            guard let route = routes[edge.id] else { continue }
+            let obstacles = nodeRects.compactMap { id, rect -> CGRect? in
+                guard id != edge.fromID, id != edge.toID else { return nil }
+                return rect.insetBy(dx: -4, dy: -2)
+            }
+            nodePenetrations += editorRouteIntersectionCount(points: route.points, obstacles: obstacles)
+        }
+
+        let score = nodePenetrations * 5_000_000
+            + crossings * 10_000
             + overlaps * 3000
             + bends * 40
             + Int(length.rounded())
         return FlowEditorRoutingMetrics(
+            nodePenetrations: nodePenetrations,
             crossings: crossings,
             overlaps: overlaps,
             bends: bends,
@@ -2843,6 +2966,8 @@ struct FlowDetailView: View {
         let isBackEdge = edge.sourceSide == .north
             && edge.targetSide == .south
             && edge.semantic != .wait
+        let worldMinX = nodeRects.values.map(\.minX).min() ?? min(fromAnchor.x, toAnchor.x)
+        let worldMaxX = nodeRects.values.map(\.maxX).max() ?? max(fromAnchor.x, toAnchor.x)
         let worldMinY = nodeRects.values.map(\.minY).min() ?? min(fromAnchor.y, toAnchor.y)
         let worldMaxY = nodeRects.values.map(\.maxY).max() ?? max(fromAnchor.y, toAnchor.y)
         let shift = CGFloat(max(edge.sourceSlot, edge.targetSlot)) * 20
@@ -2857,6 +2982,7 @@ struct FlowDetailView: View {
             return rect.insetBy(dx: -12, dy: -8)
         }
 
+        var laneHints: [CGFloat] = []
         var candidates: [[CGPoint]] = [
             [
                 fromAnchor,
@@ -2896,6 +3022,7 @@ struct FlowDetailView: View {
             let laneBaseY = useTopLane
                 ? worldMinY - (96 + shift * 0.52)
                 : worldMaxY + (96 + shift * 0.52)
+            laneHints.append(laneBaseY)
             candidates.append([
                 fromAnchor,
                 fromEscape,
@@ -2913,6 +3040,23 @@ struct FlowDetailView: View {
                 toEscape,
                 toAnchor
             ])
+        }
+
+        if let graphRoute = editorObstacleAwareRoute(
+            fromAnchor: fromAnchor,
+            fromEscape: fromEscape,
+            toEscape: toEscape,
+            toAnchor: toAnchor,
+            obstacles: obstacles,
+            worldBounds: CGRect(
+                x: worldMinX,
+                y: worldMinY,
+                width: max(worldMaxX - worldMinX, 1),
+                height: max(worldMaxY - worldMinY, 1)
+            ),
+            laneHints: laneHints
+        ) {
+            candidates.insert(graphRoute, at: 0)
         }
 
         let points = editorBestRoute(
@@ -2967,6 +3111,219 @@ struct FlowDetailView: View {
             let xOffset = min(max(rawOffset, -maxXOffset), maxXOffset)
             return CGPoint(x: rect.midX + xOffset, y: rect.maxY + 8)
         }
+    }
+
+    private func editorUniqueSortedValues(_ values: [CGFloat], tolerance: CGFloat = 0.5) -> [CGFloat] {
+        let sorted = values.sorted()
+        guard !sorted.isEmpty else { return [] }
+        var result: [CGFloat] = [sorted[0]]
+        for value in sorted.dropFirst() {
+            if abs(value - (result.last ?? value)) > tolerance {
+                result.append(value)
+            }
+        }
+        return result
+    }
+
+    private func editorObstacleAwareRoute(
+        fromAnchor: CGPoint,
+        fromEscape: CGPoint,
+        toEscape: CGPoint,
+        toAnchor: CGPoint,
+        obstacles: [CGRect],
+        worldBounds: CGRect,
+        laneHints: [CGFloat]
+    ) -> [CGPoint]? {
+        enum Axis: Hashable {
+            case none
+            case horizontal
+            case vertical
+        }
+        struct State: Hashable {
+            var nodeIndex: Int
+            var axis: Axis
+        }
+
+        let clearance: CGFloat = 24
+        var xValues: [CGFloat] = [
+            fromAnchor.x, fromEscape.x, toEscape.x, toAnchor.x,
+            (fromEscape.x + toEscape.x) / 2,
+            worldBounds.minX - 120,
+            worldBounds.maxX + 120
+        ]
+        var yValues: [CGFloat] = [
+            fromAnchor.y, fromEscape.y, toEscape.y, toAnchor.y,
+            (fromEscape.y + toEscape.y) / 2,
+            worldBounds.minY - 120,
+            worldBounds.maxY + 120
+        ]
+        yValues.append(contentsOf: laneHints)
+
+        for obstacle in obstacles {
+            xValues.append(contentsOf: [
+                obstacle.minX - clearance,
+                obstacle.midX,
+                obstacle.maxX + clearance
+            ])
+            yValues.append(contentsOf: [
+                obstacle.minY - clearance,
+                obstacle.midY,
+                obstacle.maxY + clearance
+            ])
+        }
+
+        let xs = editorUniqueSortedValues(xValues)
+        let ys = editorUniqueSortedValues(yValues)
+        guard !xs.isEmpty, !ys.isEmpty else { return nil }
+
+        func pointKey(_ point: CGPoint) -> String {
+            "\(Int((point.x * 2).rounded())):\(Int((point.y * 2).rounded()))"
+        }
+
+        var points: [CGPoint] = []
+        var pointIndexByKey: [String: Int] = [:]
+        var pointsByX: [String: [Int]] = [:]
+        var pointsByY: [String: [Int]] = [:]
+
+        func blocked(_ point: CGPoint) -> Bool {
+            obstacles.contains { $0.contains(point) }
+        }
+
+        for x in xs {
+            for y in ys {
+                let point = CGPoint(x: x, y: y)
+                if blocked(point) {
+                    continue
+                }
+                let index = points.count
+                points.append(point)
+                let key = pointKey(point)
+                pointIndexByKey[key] = index
+                let xKey = "\(Int((x * 2).rounded()))"
+                let yKey = "\(Int((y * 2).rounded()))"
+                pointsByX[xKey, default: []].append(index)
+                pointsByY[yKey, default: []].append(index)
+            }
+        }
+
+        guard !points.isEmpty else { return nil }
+        guard let startIndex = pointIndexByKey[pointKey(fromEscape)],
+              let endIndex = pointIndexByKey[pointKey(toEscape)] else {
+            return nil
+        }
+
+        var adjacency: [Int: [(next: Int, axis: Axis, cost: CGFloat)]] = [:]
+
+        func segmentBlocked(_ start: CGPoint, _ end: CGPoint) -> Bool {
+            for obstacle in obstacles {
+                if editorSegmentIntersectsNode(
+                    start: start,
+                    end: end,
+                    rect: obstacle.insetBy(dx: -0.5, dy: -0.5)
+                ) {
+                    return true
+                }
+            }
+            return false
+        }
+
+        for (_, indices) in pointsByX {
+            let sorted = indices.sorted { points[$0].y < points[$1].y }
+            guard sorted.count >= 2 else { continue }
+            for i in 0..<(sorted.count - 1) {
+                let a = sorted[i]
+                let b = sorted[i + 1]
+                let p0 = points[a]
+                let p1 = points[b]
+                if segmentBlocked(p0, p1) {
+                    continue
+                }
+                let cost = abs(p1.y - p0.y)
+                adjacency[a, default: []].append((next: b, axis: .vertical, cost: cost))
+                adjacency[b, default: []].append((next: a, axis: .vertical, cost: cost))
+            }
+        }
+
+        for (_, indices) in pointsByY {
+            let sorted = indices.sorted { points[$0].x < points[$1].x }
+            guard sorted.count >= 2 else { continue }
+            for i in 0..<(sorted.count - 1) {
+                let a = sorted[i]
+                let b = sorted[i + 1]
+                let p0 = points[a]
+                let p1 = points[b]
+                if segmentBlocked(p0, p1) {
+                    continue
+                }
+                let cost = abs(p1.x - p0.x)
+                adjacency[a, default: []].append((next: b, axis: .horizontal, cost: cost))
+                adjacency[b, default: []].append((next: a, axis: .horizontal, cost: cost))
+            }
+        }
+
+        let turnPenalty: CGFloat = 72
+        let startState = State(nodeIndex: startIndex, axis: .none)
+
+        var open: Set<State> = [startState]
+        var cameFrom: [State: State] = [:]
+        var gScore: [State: CGFloat] = [startState: 0]
+        var fScore: [State: CGFloat] = [
+            startState: abs(points[startIndex].x - points[endIndex].x) + abs(points[startIndex].y - points[endIndex].y)
+        ]
+
+        func heuristic(_ index: Int) -> CGFloat {
+            let p = points[index]
+            let end = points[endIndex]
+            return abs(p.x - end.x) + abs(p.y - end.y)
+        }
+
+        var finalState: State?
+
+        while !open.isEmpty {
+            let current = open.min {
+                (fScore[$0] ?? .greatestFiniteMagnitude) < (fScore[$1] ?? .greatestFiniteMagnitude)
+            }
+            guard let current else { break }
+
+            if current.nodeIndex == endIndex {
+                finalState = current
+                break
+            }
+
+            open.remove(current)
+            let currentG = gScore[current] ?? .greatestFiniteMagnitude
+            for next in adjacency[current.nodeIndex, default: []] {
+                let turnCost: CGFloat = (current.axis == .none || current.axis == next.axis) ? 0 : turnPenalty
+                let tentative = currentG + next.cost + turnCost
+                let nextState = State(nodeIndex: next.next, axis: next.axis)
+                if tentative < (gScore[nextState] ?? .greatestFiniteMagnitude) {
+                    cameFrom[nextState] = current
+                    gScore[nextState] = tentative
+                    fScore[nextState] = tentative + heuristic(next.next)
+                    open.insert(nextState)
+                }
+            }
+        }
+
+        guard let endState = finalState else { return nil }
+
+        var statePath: [State] = [endState]
+        var cursor = endState
+        while let previous = cameFrom[cursor] {
+            statePath.append(previous)
+            cursor = previous
+        }
+        statePath.reverse()
+
+        let graphPoints = editorSimplifyOrthogonalPoints(
+            statePath.map { points[$0.nodeIndex] }
+        )
+        guard graphPoints.count >= 2 else { return nil }
+
+        var full: [CGPoint] = [fromAnchor, fromEscape]
+        full.append(contentsOf: graphPoints.dropFirst())
+        full.append(contentsOf: [toEscape, toAnchor])
+        return editorSimplifyOrthogonalPoints(full)
     }
 
     private func editorBestRoute(
@@ -3365,7 +3722,8 @@ struct FlowDetailView: View {
         forceFullReflow: Bool
     ) -> Int {
         let movementWeight = forceFullReflow ? 8 : 40
-        return nodeOverlaps * 10_000_000
+        return metrics.nodePenetrations * 25_000_000
+            + nodeOverlaps * 10_000_000
             + metrics.overlaps * 1_500_000
             + metrics.crossings * 200_000
             + metrics.bends * 120
