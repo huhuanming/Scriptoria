@@ -95,6 +95,8 @@ struct TestWorkspace {
             thread_id = os.environ.get("SCRIPTORIA_FAKE_CODEX_THREAD_ID", "thread-test")
             turn_id = os.environ.get("SCRIPTORIA_FAKE_CODEX_TURN_ID", "turn-test")
             pid_file = os.environ.get("SCRIPTORIA_FAKE_CODEX_PID_FILE")
+            turn_open = False
+            command_accepted = False
 
             if pid_file:
                 try:
@@ -131,16 +133,23 @@ struct TestWorkspace {
                 elif method == "turn/start":
                     send({"jsonrpc": "2.0", "id": req_id, "result": {"turn": {"id": turn_id}}})
                     send({"jsonrpc": "2.0", "method": "turn/started", "params": {"turn": {"id": turn_id}}})
+                    turn_open = True
+                    command_accepted = False
                     if mode == "complete":
                         send({"jsonrpc": "2.0", "method": "item/agentMessage/delta", "params": {"itemId": "agent-1", "delta": "agent delta\n"}})
                         send({"jsonrpc": "2.0", "method": "item/commandExecution/outputDelta", "params": {"itemId": "cmd-1", "delta": "command delta\n"}})
                         send({"jsonrpc": "2.0", "method": "item/completed", "params": {"item": {"type": "agentMessage", "phase": "final_answer", "text": "final answer"}}})
                         send({"jsonrpc": "2.0", "method": "turn/completed", "params": {"turn": {"id": turn_id, "status": "completed"}}})
+                        turn_open = False
                     elif mode == "interrupt_on_start":
                         send({"jsonrpc": "2.0", "method": "turn/completed", "params": {"turn": {"id": turn_id, "status": "interrupted"}}})
+                        turn_open = False
                     elif mode == "exit_after_turn_start":
                         sys.exit(3)
                 elif method == "turn/steer":
+                    if mode == "wait_for_command_single_accept_json" and (not turn_open or command_accepted):
+                        send({"jsonrpc": "2.0", "id": req_id, "error": {"code": -32000, "message": "turn not active"}})
+                        continue
                     steer_text = ""
                     try:
                         steer_text = request["params"]["input"][0]["text"]
@@ -148,11 +157,20 @@ struct TestWorkspace {
                         pass
                     send({"jsonrpc": "2.0", "id": req_id, "result": {}})
                     send({"jsonrpc": "2.0", "method": "item/agentMessage/delta", "params": {"itemId": "agent-1", "delta": f"steer:{steer_text}\n"}})
-                    send({"jsonrpc": "2.0", "method": "item/completed", "params": {"item": {"type": "agentMessage", "phase": "final_answer", "text": "steer done"}}})
+                    final_text = "steer done"
+                    if mode in ("wait_for_command_json", "wait_for_command_single_accept_json"):
+                        final_text = json.dumps({"received": steer_text})
+                    send({"jsonrpc": "2.0", "method": "item/completed", "params": {"item": {"type": "agentMessage", "phase": "final_answer", "text": final_text}}})
                     send({"jsonrpc": "2.0", "method": "turn/completed", "params": {"turn": {"id": turn_id, "status": "completed"}}})
+                    command_accepted = True
+                    turn_open = False
                 elif method == "turn/interrupt":
+                    if mode == "wait_for_command_single_accept_json" and not turn_open:
+                        send({"jsonrpc": "2.0", "id": req_id, "error": {"code": -32000, "message": "turn not active"}})
+                        continue
                     send({"jsonrpc": "2.0", "id": req_id, "result": {}})
                     send({"jsonrpc": "2.0", "method": "turn/completed", "params": {"turn": {"id": turn_id, "status": "interrupted"}}})
+                    turn_open = False
                 else:
                     send({"jsonrpc": "2.0", "id": req_id, "result": {}})
             """#
@@ -288,6 +306,7 @@ func runCLI(
     arguments: [String],
     extraEnvironment: [String: String?] = [:],
     cwd: String? = nil,
+    stdin: String? = nil,
     timeout: TimeInterval = 15
 ) throws -> CLIResult {
     let process = Process()
@@ -328,8 +347,18 @@ func runCLI(
     let stderrPipe = Pipe()
     process.standardOutput = stdoutPipe
     process.standardError = stderrPipe
+    var stdinPipe: Pipe?
+    if stdin != nil {
+        let pipe = Pipe()
+        process.standardInput = pipe
+        stdinPipe = pipe
+    }
 
     try process.run()
+    if let stdin, let data = stdin.data(using: .utf8) {
+        stdinPipe?.fileHandleForWriting.write(data)
+        stdinPipe?.fileHandleForWriting.closeFile()
+    }
     let deadline = Date().addingTimeInterval(timeout)
     var timedOut = false
     while process.isRunning && Date() < deadline {

@@ -1,4 +1,24 @@
+import Darwin
 import Foundation
+
+public struct ScriptRunOptions: Sendable {
+    public var args: [String]
+    public var env: [String: String]
+    public var timeoutSec: Int?
+    public var workingDirectory: String?
+
+    public init(
+        args: [String] = [],
+        env: [String: String] = [:],
+        timeoutSec: Int? = nil,
+        workingDirectory: String? = nil
+    ) {
+        self.args = args
+        self.env = env
+        self.timeoutSec = timeoutSec
+        self.workingDirectory = workingDirectory
+    }
+}
 
 /// Executes scripts and captures output
 public final class ScriptRunner: Sendable {
@@ -6,7 +26,12 @@ public final class ScriptRunner: Sendable {
 
     /// Run a script and return the result
     public func run(_ script: Script) async throws -> ScriptRun {
-        try await runStreaming(script, onOutput: nil)
+        try await run(script, options: .init())
+    }
+
+    /// Run a script with options.
+    public func run(_ script: Script, options: ScriptRunOptions) async throws -> ScriptRun {
+        try await runStreaming(script, options: options, onOutput: nil)
     }
 
     /// Run a script with real-time streaming output.
@@ -15,7 +40,24 @@ public final class ScriptRunner: Sendable {
         _ script: Script,
         onOutput: (@Sendable (String, Bool) -> Void)?
     ) async throws -> ScriptRun {
-        try await runStreaming(script, runId: UUID(), logManager: nil, onStart: nil, onOutput: onOutput)
+        try await runStreaming(script, options: .init(), onOutput: onOutput)
+    }
+
+    /// Run a script with real-time streaming output and options.
+    /// `onOutput` is called on each chunk of stdout/stderr data: (text, isStderr)
+    public func runStreaming(
+        _ script: Script,
+        options: ScriptRunOptions,
+        onOutput: (@Sendable (String, Bool) -> Void)?
+    ) async throws -> ScriptRun {
+        try await runStreaming(
+            script,
+            options: options,
+            runId: UUID(),
+            logManager: nil,
+            onStart: nil,
+            onOutput: onOutput
+        )
     }
 
     /// Run a script with persistent logging, PID tracking, and real-time streaming output.
@@ -26,6 +68,31 @@ public final class ScriptRunner: Sendable {
     ///   - onOutput: Called on each chunk of stdout/stderr data: (text, isStderr)
     public func runStreaming(
         _ script: Script,
+        runId: UUID,
+        logManager: LogManager?,
+        onStart: (@Sendable (Int32) -> Void)?,
+        onOutput: (@Sendable (String, Bool) -> Void)?
+    ) async throws -> ScriptRun {
+        try await runStreaming(
+            script,
+            options: .init(),
+            runId: runId,
+            logManager: logManager,
+            onStart: onStart,
+            onOutput: onOutput
+        )
+    }
+
+    /// Run a script with persistent logging, PID tracking, and real-time streaming output.
+    /// - Parameters:
+    ///   - options: Additional execution options (args/env/timeout/workingDirectory)
+    ///   - runId: The UUID to use for the ScriptRun record
+    ///   - logManager: If provided, output is written to a log file on disk
+    ///   - onStart: Called with the process PID immediately after launch
+    ///   - onOutput: Called on each chunk of stdout/stderr data: (text, isStderr)
+    public func runStreaming(
+        _ script: Script,
+        options: ScriptRunOptions,
         runId: UUID,
         logManager: LogManager?,
         onStart: (@Sendable (Int32) -> Void)?,
@@ -48,6 +115,7 @@ public final class ScriptRunner: Sendable {
 
         if interpreter == .binary {
             process.executableURL = URL(fileURLWithPath: script.path)
+            process.arguments = options.args
         } else if let execPath = interpreter.executablePath {
             // For interpreters that may be installed via version managers (nvm, pyenv, etc.),
             // resolve the actual path at runtime if the hardcoded path doesn't exist.
@@ -60,22 +128,31 @@ public final class ScriptRunner: Sendable {
                 resolvedPath = execPath
             }
             process.executableURL = URL(fileURLWithPath: resolvedPath)
-            process.arguments = [script.path]
+            process.arguments = [script.path] + options.args
         } else {
             // Fallback: use /bin/sh
             process.executableURL = URL(fileURLWithPath: "/bin/sh")
-            process.arguments = [script.path]
+            process.arguments = [script.path] + options.args
         }
 
-        // Set working directory to script's directory
+        // Set working directory to script's directory unless explicitly overridden.
         let scriptDir = URL(fileURLWithPath: script.path).deletingLastPathComponent()
-        process.currentDirectoryURL = scriptDir
+        let configuredWorkingDirectory = options.workingDirectory?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        if let configuredWorkingDirectory, !configuredWorkingDirectory.isEmpty {
+            process.currentDirectoryURL = URL(fileURLWithPath: configuredWorkingDirectory)
+        } else {
+            process.currentDirectoryURL = scriptDir
+        }
 
         // Inherit full login shell environment (critical for launchd which has minimal PATH)
         var env = ScriptRunner.loginShellEnvironment() ?? ProcessInfo.processInfo.environment
         let extraPaths = ["/usr/local/bin", "/opt/homebrew/bin"]
         if let existingPath = env["PATH"] {
             env["PATH"] = (extraPaths + [existingPath]).joined(separator: ":")
+        }
+        for (key, value) in options.env {
+            env[key] = value
         }
         process.environment = env
 
@@ -137,10 +214,50 @@ public final class ScriptRunner: Sendable {
             record.pid = pid
             onStart?(pid)
 
-            // Wait for process on a background thread to avoid blocking
-            await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
-                process.terminationHandler = { _ in
-                    continuation.resume()
+            var didTimeout = false
+            if let timeoutSec = options.timeoutSec {
+                let deadline = Date().addingTimeInterval(TimeInterval(timeoutSec))
+                while process.isRunning {
+                    if Date() >= deadline {
+                        didTimeout = true
+                        process.terminate()
+                        break
+                    }
+                    try? await Task.sleep(nanoseconds: 50_000_000)
+                }
+                if didTimeout {
+                    let graceEnd = Date().addingTimeInterval(1.0)
+                    while process.isRunning, Date() < graceEnd {
+                        try? await Task.sleep(nanoseconds: 20_000_000)
+                    }
+                    if process.isRunning {
+                        kill(process.processIdentifier, SIGKILL)
+                    }
+                    let killWaitEnd = Date().addingTimeInterval(1.0)
+                    while process.isRunning, Date() < killWaitEnd {
+                        try? await Task.sleep(nanoseconds: 20_000_000)
+                    }
+                    if process.isRunning {
+                        // Do not block forever when Process bookkeeping fails to observe termination.
+                        // Return a timeout failure using captured output so far.
+                        stdoutPipe.fileHandleForReading.readabilityHandler = nil
+                        stderrPipe.fileHandleForReading.readabilityHandler = nil
+                        record.output = outputCollector.stdout
+                        record.errorOutput = outputCollector.stderr
+                        let suffix = record.errorOutput.isEmpty ? "" : "\n"
+                        record.errorOutput += "\(suffix)Script timed out after \(options.timeoutSec ?? 0) seconds."
+                        record.exitCode = 124
+                        record.finishedAt = Date()
+                        record.status = .failure
+                        return record
+                    }
+                }
+            } else {
+                // Wait for process on a background thread to avoid blocking.
+                await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+                    process.terminationHandler = { _ in
+                        continuation.resume()
+                    }
                 }
             }
 
@@ -177,6 +294,12 @@ public final class ScriptRunner: Sendable {
                 record.status = .cancelled
             } else {
                 record.status = process.terminationStatus == 0 ? .success : .failure
+            }
+            if didTimeout {
+                record.status = .failure
+                record.exitCode = 124
+                let suffix = record.errorOutput.isEmpty ? "" : "\n"
+                record.errorOutput += "\(suffix)Script timed out after \(options.timeoutSec ?? 0) seconds."
             }
         } catch {
             record.finishedAt = Date()

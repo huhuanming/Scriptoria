@@ -132,7 +132,7 @@ struct ScriptoriaCLITests {
         }
     }
 
-    @Test("run command success with skip-agent")
+    @Test("TC-R01 run command success with skip-agent")
     func testRunCommandSuccess() async throws {
         try await withTestWorkspace(prefix: "scriptoria-cli-run-success") { workspace in
             let scriptPath = try workspace.makeScript(name: "ok.sh", content: "#!/bin/sh\necho run-ok\n")
@@ -202,7 +202,7 @@ struct ScriptoriaCLITests {
         }
     }
 
-    @Test("run command agent stage + memory")
+    @Test("TC-P07 run command agent stage + memory")
     func testRunCommandAgentStage() async throws {
         try await withTestWorkspace(prefix: "scriptoria-cli-agent") { workspace in
             let codexPath = try workspace.makeFakeCodex()
@@ -243,7 +243,7 @@ struct ScriptoriaCLITests {
         }
     }
 
-    @Test("run command skips agent when pre-script output is false")
+    @Test("TC-R02 run command skips agent when pre-script output is false")
     func testRunCommandAgentTriggerSkip() async throws {
         try await withTestWorkspace(prefix: "scriptoria-cli-agent-skip") { workspace in
             let scriptPath = try workspace.makeScript(name: "gate-false.sh", content: "#!/bin/sh\necho false\n")
@@ -267,7 +267,7 @@ struct ScriptoriaCLITests {
         }
     }
 
-    @Test("run command starts agent when pre-script output is true")
+    @Test("TC-R02 run command starts agent when pre-script output is true")
     func testRunCommandAgentTriggerRun() async throws {
         try await withTestWorkspace(prefix: "scriptoria-cli-agent-run") { workspace in
             let codexPath = try workspace.makeFakeCodex()
@@ -465,7 +465,7 @@ struct ScriptoriaCLITests {
         }
     }
 
-    @Test("schedule command family")
+    @Test("TC-R03 schedule command family")
     func testScheduleCommands() async throws {
         try await withTestWorkspace(prefix: "scriptoria-cli-schedule") { workspace in
             let scriptPath = try workspace.makeScript(name: "schedule.sh", content: "#!/bin/sh\necho schedule\n")
@@ -510,7 +510,7 @@ struct ScriptoriaCLITests {
         }
     }
 
-    @Test("ps/logs/kill commands")
+    @Test("TC-R03 ps/logs/kill commands")
     func testPsLogsKillCommands() async throws {
         try await withTestWorkspace(prefix: "scriptoria-cli-process") { workspace in
             let scriptPath = try workspace.makeScript(name: "process.sh", content: "#!/bin/sh\necho process\n")

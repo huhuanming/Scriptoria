@@ -131,6 +131,23 @@ scriptoria config show                      # Show current config
 scriptoria config set-dir ~/my-data         # Set data directory
 ```
 
+### `scriptoria flow` — Flow DSL (state machine automation)
+
+#### Validate / Compile / Run / Dry-Run
+
+```bash
+scriptoria flow validate ./flow.yaml
+scriptoria flow compile ./flow.yaml --out ./flow.ir.json
+scriptoria flow run ./flow.yaml --var repo=org/repo --max-agent-rounds 10 --command "/interrupt"
+scriptoria flow dry-run ./flow.yaml --fixture ./fixture.json
+```
+
+Subcommands:
+- `flow validate <flow.yaml> [--no-fs-check]`
+- `flow compile <flow.yaml> --out <flow.json> [--no-fs-check]`
+- `flow run <flow.yaml> [--var <k=v> ...] [--max-agent-rounds <n>] [--no-steer] [--command <cmd> ...]`
+- `flow dry-run <flow.yaml> --fixture <fixture.json>`
+
 ## Typical AI Workflow
 
 A complete example of adding a script, scheduling it, and verifying:
@@ -164,6 +181,7 @@ scriptoria schedule list
 - Models: `Sources/ScriptoriaCore/Models/` (Script, ScriptRun, Schedule)
 - Storage: `Sources/ScriptoriaCore/Storage/` (ScriptStore, DatabaseManager, Config)
 - Execution: `Sources/ScriptoriaCore/Execution/ScriptRunner.swift`
+- Flow: `Sources/ScriptoriaCore/Flow/`
 - Scheduling: `Sources/ScriptoriaCore/Scheduling/` (ScheduleStore, LaunchdHelper)
 - App views: `Sources/ScriptoriaApp/Views/`
 - App state: `Sources/ScriptoriaApp/AppState.swift`

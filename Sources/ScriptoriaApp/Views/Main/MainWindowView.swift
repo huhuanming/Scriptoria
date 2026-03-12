@@ -14,25 +14,33 @@ struct MainWindowView: View {
             switch appState.selectedTag {
             case "__schedules__":
                 AllSchedulesView()
+            case "__flows__":
+                FlowListView()
             default:
                 ScriptListView()
             }
         } detail: {
-            if let script = appState.selectedScript {
-                ScriptDetailView(script: script)
+            if appState.selectedTag == "__flows__" {
+                FlowDetailView()
             } else {
-                EmptyDetailView()
+                if let script = appState.selectedScript {
+                    ScriptDetailView(script: script)
+                } else {
+                    EmptyDetailView()
+                }
             }
         }
         .searchable(text: $appState.searchQuery, prompt: "Search scripts...")
         .toolbar {
             ToolbarItemGroup(placement: .primaryAction) {
-                Button {
-                    showAddSheet = true
-                } label: {
-                    Image(systemName: "plus")
+                if appState.selectedTag != "__flows__" {
+                    Button {
+                        showAddSheet = true
+                    } label: {
+                        Image(systemName: "plus")
+                    }
+                    .help("Add script")
                 }
-                .help("Add script")
             }
         }
         .sheet(isPresented: $showAddSheet) {
@@ -63,6 +71,16 @@ struct SidebarView: View {
                 Section("Automation") {
                     sidebarItem("Schedules", icon: "clock.arrow.circlepath", tag: "__schedules__", count: appState.schedules.filter(\.isEnabled).count, iconColor: Theme.runningColor)
                 }
+            }
+
+            Section("Flow") {
+                sidebarItem(
+                    "Flows",
+                    icon: "point.3.connected.trianglepath.dotted",
+                    tag: "__flows__",
+                    count: appState.flowDefinitions.count,
+                    iconColor: .teal
+                )
             }
 
             if !appState.allTags.isEmpty {

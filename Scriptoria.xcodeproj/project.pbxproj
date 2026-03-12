@@ -12,9 +12,10 @@
 		1101D4D75F95D6E5C61D9762 /* ScriptoriaApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 314C4B3F5DEE48EE23608935 /* ScriptoriaApp.swift */; };
 		14C5032478AD8E0E40750609 /* ScriptDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = DBCD790DB86E129E5B8AAC27 /* ScriptDetailView.swift */; };
 		18730951A4D97AAD6F17FC0C /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8734D3C6C6D80C25E8EE3EFA /* AppDelegate.swift */; };
-		6836D847EB2FB81F93BF6865 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7828AA1B9D9E8F4ABB338426 /* SettingsView.swift */; };
-		82326E1EF91940E0E56DA13C /* AppState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 41F53EBF447399BC36FEC18B /* AppState.swift */; };
-		AD4CC9D6D339E6656981A49C /* ScheduleView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 926885C9F5B17D4FE43B7DED /* ScheduleView.swift */; };
+			6836D847EB2FB81F93BF6865 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7828AA1B9D9E8F4ABB338426 /* SettingsView.swift */; };
+			82326E1EF91940E0E56DA13C /* AppState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 41F53EBF447399BC36FEC18B /* AppState.swift */; };
+			A19A8E4D1C2B4F0AA66D2F11 /* FlowWorkbenchView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A19A8E4C1C2B4F0AA66D2F11 /* FlowWorkbenchView.swift */; };
+			AD4CC9D6D339E6656981A49C /* ScheduleView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 926885C9F5B17D4FE43B7DED /* ScheduleView.swift */; };
 		B76B2B08A4F11C853B7B7777 /* AllSchedulesView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2FDC65F4310EFA49277C47E8 /* AllSchedulesView.swift */; };
 		C6CCFA4BA9270DC3DF63F9AF /* AddScriptSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = C1B5C87085FA75C7D7F4F73F /* AddScriptSheet.swift */; };
 		ED30B7341DB4D991E93A9333 /* Theme.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1E48F0320DA436D78535A30 /* Theme.swift */; };
@@ -26,9 +27,10 @@
 		001CC86E19769AC65E40D004 /* Scriptoria.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = Scriptoria.entitlements; sourceTree = "<group>"; };
 		2925628068564CA6706DC15D /* OnboardingView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OnboardingView.swift; sourceTree = "<group>"; };
 		2FDC65F4310EFA49277C47E8 /* AllSchedulesView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AllSchedulesView.swift; sourceTree = "<group>"; };
-		314C4B3F5DEE48EE23608935 /* ScriptoriaApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScriptoriaApp.swift; sourceTree = "<group>"; };
-		41F53EBF447399BC36FEC18B /* AppState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppState.swift; sourceTree = "<group>"; };
-		534A295C452035CF45B5B0D6 /* MainWindowView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MainWindowView.swift; sourceTree = "<group>"; };
+			314C4B3F5DEE48EE23608935 /* ScriptoriaApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScriptoriaApp.swift; sourceTree = "<group>"; };
+			41F53EBF447399BC36FEC18B /* AppState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppState.swift; sourceTree = "<group>"; };
+			A19A8E4C1C2B4F0AA66D2F11 /* FlowWorkbenchView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FlowWorkbenchView.swift; sourceTree = "<group>"; };
+			534A295C452035CF45B5B0D6 /* MainWindowView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MainWindowView.swift; sourceTree = "<group>"; };
 		7828AA1B9D9E8F4ABB338426 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
 		8734D3C6C6D80C25E8EE3EFA /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
 		8F1189A738FE4A29534EEF76 /* Scriptoria.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Scriptoria.app; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -94,16 +96,17 @@
 			path = Views;
 			sourceTree = "<group>";
 		};
-		DB167BE26AF0E99D5C017456 /* Main */ = {
-			isa = PBXGroup;
-			children = (
-				C1B5C87085FA75C7D7F4F73F /* AddScriptSheet.swift */,
-				2FDC65F4310EFA49277C47E8 /* AllSchedulesView.swift */,
-				534A295C452035CF45B5B0D6 /* MainWindowView.swift */,
-				2925628068564CA6706DC15D /* OnboardingView.swift */,
-				926885C9F5B17D4FE43B7DED /* ScheduleView.swift */,
-				DBCD790DB86E129E5B8AAC27 /* ScriptDetailView.swift */,
-				7828AA1B9D9E8F4ABB338426 /* SettingsView.swift */,
+			DB167BE26AF0E99D5C017456 /* Main */ = {
+				isa = PBXGroup;
+				children = (
+					C1B5C87085FA75C7D7F4F73F /* AddScriptSheet.swift */,
+					2FDC65F4310EFA49277C47E8 /* AllSchedulesView.swift */,
+					A19A8E4C1C2B4F0AA66D2F11 /* FlowWorkbenchView.swift */,
+					534A295C452035CF45B5B0D6 /* MainWindowView.swift */,
+					2925628068564CA6706DC15D /* OnboardingView.swift */,
+					926885C9F5B17D4FE43B7DED /* ScheduleView.swift */,
+					DBCD790DB86E129E5B8AAC27 /* ScriptDetailView.swift */,
+					7828AA1B9D9E8F4ABB338426 /* SettingsView.swift */,
 			);
 			path = Main;
 			sourceTree = "<group>";
@@ -186,17 +189,18 @@
 /* End PBXProject section */
 
 /* Begin PBXSourcesBuildPhase section */
-		D848BC60306948A79CC99449 /* Sources */ = {
-			isa = PBXSourcesBuildPhase;
-			buildActionMask = 2147483647;
-			files = (
-				C6CCFA4BA9270DC3DF63F9AF /* AddScriptSheet.swift in Sources */,
-				B76B2B08A4F11C853B7B7777 /* AllSchedulesView.swift in Sources */,
-				18730951A4D97AAD6F17FC0C /* AppDelegate.swift in Sources */,
-				82326E1EF91940E0E56DA13C /* AppState.swift in Sources */,
-				F8965BFC7FD0BC00A237F7C0 /* MainWindowView.swift in Sources */,
-				10D0C80B4E79E74F06C31D90 /* MenuBarPanel.swift in Sources */,
-				F27F0388CC886AA0ECAE97F0 /* OnboardingView.swift in Sources */,
+			D848BC60306948A79CC99449 /* Sources */ = {
+				isa = PBXSourcesBuildPhase;
+				buildActionMask = 2147483647;
+				files = (
+					C6CCFA4BA9270DC3DF63F9AF /* AddScriptSheet.swift in Sources */,
+					B76B2B08A4F11C853B7B7777 /* AllSchedulesView.swift in Sources */,
+					A19A8E4D1C2B4F0AA66D2F11 /* FlowWorkbenchView.swift in Sources */,
+					18730951A4D97AAD6F17FC0C /* AppDelegate.swift in Sources */,
+					82326E1EF91940E0E56DA13C /* AppState.swift in Sources */,
+					F8965BFC7FD0BC00A237F7C0 /* MainWindowView.swift in Sources */,
+					10D0C80B4E79E74F06C31D90 /* MenuBarPanel.swift in Sources */,
+					F27F0388CC886AA0ECAE97F0 /* OnboardingView.swift in Sources */,
 				AD4CC9D6D339E6656981A49C /* ScheduleView.swift in Sources */,
 				14C5032478AD8E0E40750609 /* ScriptDetailView.swift in Sources */,
 				1101D4D75F95D6E5C61D9762 /* ScriptoriaApp.swift in Sources */,

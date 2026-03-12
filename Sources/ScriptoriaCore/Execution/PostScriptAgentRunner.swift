@@ -137,8 +137,14 @@ public actor PostScriptAgentSession {
     public func waitForCompletion() async throws -> AgentExecutionResult {
         if let completionResult { return completionResult }
 
-        return try await withCheckedThrowingContinuation { continuation in
-            completionContinuation = continuation
+        return try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { continuation in
+                completionContinuation = continuation
+            }
+        } onCancel: {
+            Task { [weak self] in
+                await self?.cancelPendingWait()
+            }
         }
     }
 
@@ -186,6 +192,12 @@ public actor PostScriptAgentSession {
         guard !turnId.isEmpty, pendingTurnCompletion.turnId == turnId else { return }
         self.pendingTurnCompletion = nil
         finish(status: mapStatus(pendingTurnCompletion.status))
+    }
+
+    private func cancelPendingWait() {
+        guard completionResult == nil else { return }
+        completionContinuation?.resume(throwing: CancellationError())
+        completionContinuation = nil
     }
 
     private func mapStatus(_ status: String) -> AgentRunStatus {

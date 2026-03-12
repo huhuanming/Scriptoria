@@ -1,0 +1,16 @@
+{
+  "states": {
+    "precheck": [
+      {"decision": "needs_agent", "reason": "12 eslint issues found"}
+    ],
+    "fix": [
+      {"status": "completed", "final": {"pr_url": "https://github.com/org/repo/pull/123", "summary": "round1 fix"}},
+      {"status": "completed", "final": {"pr_url": "https://github.com/org/repo/pull/123", "summary": "round2 fix"}}
+    ],
+    "postcheck": [
+      {"decision": "wait", "retry_after_sec": 1, "reason": "checks pending"},
+      {"decision": "needs_agent", "reason": "request changes"},
+      {"decision": "pass", "reason": "all green"}
+    ]
+  }
+}
