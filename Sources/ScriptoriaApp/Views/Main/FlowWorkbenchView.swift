@@ -2862,13 +2862,16 @@ struct FlowDetailView: View {
         obstacles: [CGRect],
         existingRoutes: [[CGPoint]]
     ) -> [CGPoint] {
-        var bestPoints: [CGPoint] = []
-        var bestIntersectionCount = Int.max
-        var bestRouteCrossings = Int.max
-        var bestRouteOverlaps = Int.max
-        var bestTurns = Int.max
-        var bestLength = CGFloat.greatestFiniteMagnitude
+        struct ScoredRoute {
+            var points: [CGPoint]
+            var intersections: Int
+            var crossings: Int
+            var overlaps: Int
+            var turns: Int
+            var length: CGFloat
+        }
 
+        var scoredRoutes: [ScoredRoute] = []
         for candidate in candidates {
             let points = editorSimplifyOrthogonalPoints(candidate)
             guard points.count >= 2 else { continue }
@@ -2880,30 +2883,37 @@ struct FlowDetailView: View {
                 routeCrossings += metrics.crossings
                 routeOverlaps += metrics.overlaps
             }
-            let turns = max(points.count - 2, 0)
-            let length = editorPolylineLength(points)
-            // Node penetration is treated as the strongest anti-goal:
-            // pick the route that intersects the fewest node obstacles first,
-            // then optimize edge crossings/overlaps.
-            let better = intersections < bestIntersectionCount
-                || (intersections == bestIntersectionCount && routeCrossings < bestRouteCrossings)
-                || (intersections == bestIntersectionCount && routeCrossings == bestRouteCrossings && routeOverlaps < bestRouteOverlaps)
-                || (intersections == bestIntersectionCount && routeCrossings == bestRouteCrossings && routeOverlaps == bestRouteOverlaps && turns < bestTurns)
-                || (intersections == bestIntersectionCount && routeCrossings == bestRouteCrossings && routeOverlaps == bestRouteOverlaps && turns == bestTurns && length < bestLength)
-            if better {
-                bestPoints = points
-                bestIntersectionCount = intersections
-                bestRouteCrossings = routeCrossings
-                bestRouteOverlaps = routeOverlaps
-                bestTurns = turns
-                bestLength = length
-            }
+            scoredRoutes.append(
+                ScoredRoute(
+                    points: points,
+                    intersections: intersections,
+                    crossings: routeCrossings,
+                    overlaps: routeOverlaps,
+                    turns: max(points.count - 2, 0),
+                    length: editorPolylineLength(points)
+                )
+            )
         }
 
-        if !bestPoints.isEmpty {
-            return bestPoints
+        guard !scoredRoutes.isEmpty else {
+            return editorSimplifyOrthogonalPoints(candidates.first ?? [])
         }
-        return editorSimplifyOrthogonalPoints(candidates.first ?? [])
+
+        // Hard constraint: if any route can avoid all node obstacles, never choose a penetrating route.
+        let hasNonPenetrating = scoredRoutes.contains { $0.intersections == 0 }
+        let preferredRoutes = hasNonPenetrating
+            ? scoredRoutes.filter { $0.intersections == 0 }
+            : scoredRoutes
+
+        let bestRoute = preferredRoutes.min { lhs, rhs in
+            if lhs.intersections != rhs.intersections { return lhs.intersections < rhs.intersections }
+            if lhs.crossings != rhs.crossings { return lhs.crossings < rhs.crossings }
+            if lhs.overlaps != rhs.overlaps { return lhs.overlaps < rhs.overlaps }
+            if lhs.turns != rhs.turns { return lhs.turns < rhs.turns }
+            return lhs.length < rhs.length
+        }
+
+        return bestRoute?.points ?? editorSimplifyOrthogonalPoints(candidates.first ?? [])
     }
 
     private func editorRouteIntersectionCount(points: [CGPoint], obstacles: [CGRect]) -> Int {
